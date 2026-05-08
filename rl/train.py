@@ -11,6 +11,7 @@ from tqdm import tqdm
 import sac
 import specs
 import replay
+from flax import serialization
 
 from robopianist import suite
 import dm_env_wrappers as wrappers
@@ -97,6 +98,12 @@ def _make_base_actor(spec: specs.EnvironmentSpec, args: Args) -> sac.TrainState:
     template = sac.BaseSAC.initialize(spec=spec, config=args.agent_config, seed=args.seed, discount=args.discount)
     if args.base_checkpoint is None:
         return template.actor
+    sidecar = Path(str(args.base_checkpoint).replace(".flax", "_actor.flax"))
+    if sidecar.exists():
+        with sidecar.open("rb") as f:
+            actor = serialization.from_bytes(template.actor, f.read())
+        print(f"Loaded base actor (sidecar) from {sidecar}")
+        return actor
     base = sac.BaseSAC.load(args.base_checkpoint, template)
     print(f"Loaded base actor from {args.base_checkpoint}")
     return base.actor
@@ -290,7 +297,10 @@ def main(args: Args) -> None:
             eval_env.latest_filename.unlink()
 
         if i % args.checkpoint_interval == 0:
-            agent.save(checkpoint_dir / f"checkpoint_{i}.flax")
+            ckpt_path = checkpoint_dir / f"checkpoint_{i}.flax"
+            agent.save(ckpt_path)
+            with open(checkpoint_dir / f"checkpoint_{i}_actor.flax", "wb") as f:
+                f.write(serialization.to_bytes(agent.actor))
 
         if i % args.log_interval == 0:
             wandb.log({"train/fps": int(i / (time.time() - start_time))}, step=i)
