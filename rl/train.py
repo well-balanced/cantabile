@@ -63,6 +63,7 @@ class Args:
     checkpoint_interval: int = 500_000
     velocity_reward_coef: float = 0.0
     onset_accuracy_reward_coef: float = 0.0
+    use_dense_event_critic: bool = False
     # Residual RL options.
     base_checkpoint: Optional[Path] = None
     residual_alpha: float = 0.0
@@ -93,10 +94,10 @@ def _resolve_residual_action_indices(action_names: tuple, mode: str) -> tuple:
 
 
 def _make_base_actor(spec: specs.EnvironmentSpec, args: Args) -> sac.TrainState:
-    template = sac.SAC.initialize(spec=spec, config=args.agent_config, seed=args.seed, discount=args.discount)
+    template = sac.BaseSAC.initialize(spec=spec, config=args.agent_config, seed=args.seed, discount=args.discount)
     if args.base_checkpoint is None:
         return template.actor
-    base = sac.SAC.load(args.base_checkpoint, template)
+    base = sac.BaseSAC.load(args.base_checkpoint, template)
     print(f"Loaded base actor from {args.base_checkpoint}")
     return base.actor
 
@@ -214,8 +215,15 @@ def main(args: Args) -> None:
             residual_alpha=args.residual_alpha,
             residual_action_indices=residual_action_indices,
         )
+    elif args.use_dense_event_critic:
+        agent = sac.DenseEventSAC.initialize(
+            spec=spec,
+            config=args.agent_config,
+            seed=args.seed,
+            discount=args.discount,
+        )
     else:
-        agent = sac.SAC.initialize(
+        agent = sac.BaseSAC.initialize(
             spec=spec,
             config=args.agent_config,
             seed=args.seed,
@@ -231,7 +239,9 @@ def main(args: Args) -> None:
 
     timestep = env.reset()
     replay_buffer.insert(timestep, None)
-    
+
+    _EVENT_REWARD_KEYS = {"velocity_reward", "onset_accuracy_reward"}
+
     start_step = _restore_step(args.restore_checkpoint)
     start_time = time.time()
     for i in tqdm(range(start_step + 1, args.max_steps + 1), disable=not args.tqdm_bar):
@@ -243,7 +253,14 @@ def main(args: Args) -> None:
 
         # Observe.
         timestep = env.step(action)
-        replay_buffer.insert(timestep, action)
+        reward_groups = None
+        if hasattr(env, "task") and hasattr(env.task, "reward_fn"):
+            terms = env.task.reward_fn.reward_terms
+            reward_groups = {
+                "event_reward": sum(v for k, v in terms.items() if k in _EVENT_REWARD_KEYS),
+                "dense_reward": sum(v for k, v in terms.items() if k not in _EVENT_REWARD_KEYS),
+            }
+        replay_buffer.insert(timestep, action, reward_groups=reward_groups)
 
         # Reset episode.
         if timestep.last():

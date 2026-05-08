@@ -7,6 +7,8 @@ class Transition(NamedTuple):
     state: np.ndarray
     action: np.ndarray
     reward: np.ndarray
+    reward_dense: np.ndarray
+    reward_event: np.ndarray
     discount: np.ndarray
     next_state: np.ndarray
 
@@ -27,6 +29,8 @@ class Buffer:
         self._actions = np.zeros((max_size, action_dim), dtype=np.float32)
         self._next_states = np.zeros((max_size, state_dim), dtype=np.float32)
         self._rewards = np.zeros((max_size), dtype=np.float32)
+        self._rewards_dense = np.zeros((max_size), dtype=np.float32)
+        self._rewards_event = np.zeros((max_size), dtype=np.float32)
         self._discounts = np.zeros((max_size), dtype=np.float32)
 
         self._ptr: int = 0
@@ -39,6 +43,7 @@ class Buffer:
         self,
         timestep: dm_env.TimeStep,
         action: Optional[np.ndarray],
+        reward_groups: Optional[dict] = None,
     ) -> None:
         self._prev = self._latest
         self._action = action
@@ -49,6 +54,12 @@ class Buffer:
             self._actions[self._ptr] = action
             self._next_states[self._ptr] = self._latest.observation
             self._rewards[self._ptr] = self._latest.reward
+            if reward_groups is None:
+                self._rewards_dense[self._ptr] = self._latest.reward
+                self._rewards_event[self._ptr] = 0.0
+            else:
+                self._rewards_dense[self._ptr] = reward_groups.get("dense_reward", self._latest.reward)
+                self._rewards_event[self._ptr] = reward_groups.get("event_reward", 0.0)
             self._discounts[self._ptr] = self._latest.discount
 
             self._ptr = (self._ptr + 1) % self._max_size
@@ -60,6 +71,8 @@ class Buffer:
             state=self._states[self._ind],
             action=self._actions[self._ind],
             reward=self._rewards[self._ind],
+            reward_dense=self._rewards_dense[self._ind],
+            reward_event=self._rewards_event[self._ind],
             discount=self._discounts[self._ind],
             next_state=self._next_states[self._ind],
         )

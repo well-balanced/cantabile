@@ -201,6 +201,7 @@ class MidiEvaluationWrapper(EnvironmentWrapper):
                 "matched": gt_vel is not None,
             })
 
+
     def get_velocity_metrics(self) -> Dict[str, float]:
         """Returns velocity and onset accuracy statistics over the last `deque_size` episodes."""
         trace = [row for ep in self._all_onset_traces for row in ep]
@@ -224,6 +225,15 @@ class MidiEvaluationWrapper(EnvironmentWrapper):
                 result[f"onset_{key}"] = float(
                     np.mean([ep[key] for ep in self._all_onset_accuracy])
                 )
+
+            recall = float(np.mean([ep["hit_rate"] for ep in self._all_onset_accuracy]))
+            precision = 1.0 - float(np.mean([ep["fp_rate"] for ep in self._all_onset_accuracy]))
+            onset_f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
+            result["onset_f1"] = onset_f1
+
+            vel_accuracy = 1.0 - result.get("velocity_mae", 127.0) / 127.0
+            denom = onset_f1 + vel_accuracy
+            result["expressive_f1"] = 2 * onset_f1 * vel_accuracy / denom if denom > 0 else 0.0
 
         return result
 
