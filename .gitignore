@@ -1,0 +1,10 @@
+__pycache__/
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# env-specific
+env/third_party/
+env/soundfonts/
+env/pig_single_finger/
