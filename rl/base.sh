@@ -1,7 +1,8 @@
 #!/bin/bash
 
-WANDB_DIR=/tmp/robopianist/ MUJOCO_GL=egl XLA_PYTHON_CLIENT_PREALLOCATE=false CUDA_VISIBLE_DEVICES=0 MUJOCO_EGL_DEVICE_ID=0 python train.py \
-    --root-dir /tmp/robopianist/rl/ \
+DEVICE=${1:-0}
+WANDB_DIR=./ MUJOCO_GL=egl XLA_PYTHON_CLIENT_PREALLOCATE=false CUDA_VISIBLE_DEVICES=$DEVICE MUJOCO_EGL_DEVICE_ID=$DEVICE python train.py \
+    --root-dir ./tmp \
     --warmstart-steps 5000 \
     --max-steps 5000000 \
     --discount 0.8 \
@@ -18,4 +19,8 @@ WANDB_DIR=/tmp/robopianist/ MUJOCO_GL=egl XLA_PYTHON_CLIENT_PREALLOCATE=false CU
     --primitive-fingertip-collisions \
     --eval-episodes 1 \
     --camera-id "piano/back" \
-    --tqdm-bar
+    --tqdm-bar \
+    --mode "online" \
+    --velocity-reward-coef 0.5 \
+    --onset-accuracy-reward-coef 0.5 \
+    --name "debug-online" \
