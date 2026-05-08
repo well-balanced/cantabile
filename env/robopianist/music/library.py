@@ -541,6 +541,18 @@ def nocturne_rousseau() -> midi_file.MidiFile:
     return midi
 
 
+def firststep_1() -> midi_file.MidiFile:
+    return midi_file.MidiFile.from_file(_DATA_PATH / "firststep" / "firststep-1.mid")
+
+
+def firststep_2() -> midi_file.MidiFile:
+    return midi_file.MidiFile.from_file(_DATA_PATH / "firststep" / "firststep-2.mid")
+
+
+def firststep_3() -> midi_file.MidiFile:
+    return midi_file.MidiFile.from_file(_DATA_PATH / "firststep" / "firststep-3.mid")
+
+
 MIDI_NAME_TO_CALLABLE: Dict[str, Callable[[], midi_file.MidiFile]] = {
     "TwinkleTwinkleLittleStar": twinkle_twinkle_little_star_one_hand,
     "CMajorScaleOneHand": c_major_scale_one_hand,
@@ -550,4 +562,7 @@ MIDI_NAME_TO_CALLABLE: Dict[str, Callable[[], midi_file.MidiFile]] = {
     "CMajorChordProgressionTwoHands": c_major_chord_progression_two_hands,
     "TwinkleTwinkleRousseau": twinkle_twinkle_rousseau,
     "NocturneRousseau": nocturne_rousseau,
+    "Firststep1": firststep_1,
+    "Firststep2": firststep_2,
+    "Firststep3": firststep_3,
 }

@@ -10,6 +10,9 @@ env/soundfonts/
 env/pig_single_finger/
 env/robopianist/soundfonts
 env/robopianist/models/hands/third_party/
+env/robopianist/music/data/pig_single_finger/
+env/PianoFingeringDataset_v1.2/
+env/audio/
 
 rl/wandb/
 rl/tmp/
