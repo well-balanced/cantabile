@@ -8,3 +8,5 @@ dist/
 env/third_party/
 env/soundfonts/
 env/pig_single_finger/
+
+ref

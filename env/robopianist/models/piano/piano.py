@@ -169,6 +169,9 @@ class Piano(composer.Entity):
         self._activation = np.zeros(piano_consts.NUM_KEYS, dtype=bool)
         self._sustain_activation = np.zeros(1, dtype=bool)
         self._normalized_state = np.zeros(piano_consts.NUM_KEYS, dtype=np.float64)
+        self._key_velocities = np.zeros(piano_consts.NUM_KEYS, dtype=np.float64)
+        self._onset_velocities = np.zeros(piano_consts.NUM_KEYS, dtype=np.float64)
+        self._prev_activation_for_onset = np.zeros(piano_consts.NUM_KEYS, dtype=bool)
 
     def is_key_black(self, key_id: int) -> bool:
         """Returns True if the piano key id corresponds to a black key."""
@@ -189,6 +192,11 @@ class Piano(composer.Entity):
             self._activation[:] = (
                 np.abs(self._state - self._qpos_range[:, 1]) <= _KEY_THRESHOLD
             )
+            current_qvel = np.abs(physics.bind(self.joints).qvel)
+            self._key_velocities[:] = current_qvel
+            new_onsets = self._activation & ~self._prev_activation_for_onset
+            self._onset_velocities[new_onsets] = current_qvel[new_onsets]
+        self._prev_activation_for_onset[:] = self._activation
         self._sustain_activation[:] = self._sustain_state >= _SUSTAIN_THRESHOLD
 
     def _update_key_color(self, physics: mjcf.Physics) -> None:
@@ -248,6 +256,14 @@ class Piano(composer.Entity):
     @property
     def sustain_activation(self) -> np.ndarray:
         return self._sustain_activation
+    
+    @property
+    def key_velocities(self) -> np.ndarray:
+        return self._key_velocities
+
+    @property
+    def onset_velocities(self) -> np.ndarray:
+        return self._onset_velocities
 
     @property
     def state(self) -> np.ndarray:
