@@ -8,5 +8,10 @@ dist/
 env/third_party/
 env/soundfonts/
 env/pig_single_finger/
+env/robopianist/soundfonts
+env/robopianist/models/hands/third_party/
+
+rl/wandb/
+rl/tmp/
 
 ref

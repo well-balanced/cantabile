@@ -31,7 +31,7 @@ class Args:
     discount: float = 0.99
     tqdm_bar: bool = False
     replay_capacity: int = 1_000_000
-    project: str = "robopianist"
+    project: str = "cantabile"
     entity: str = ""
     name: str = ""
     tags: str = ""
@@ -63,6 +63,43 @@ class Args:
     checkpoint_interval: int = 500_000
     velocity_reward_coef: float = 0.0
     onset_accuracy_reward_coef: float = 0.0
+    # Residual RL options.
+    base_checkpoint: Optional[Path] = None
+    residual_alpha: float = 0.0
+    residual_action_mode: str = "fingers_only"
+
+def _action_names(action_spec) -> tuple:
+    if action_spec.name:
+        names = tuple(action_spec.name.split("\t"))
+        if len(names) == action_spec.shape[-1]:
+            return names
+    return tuple(str(i) for i in range(action_spec.shape[-1]))
+
+
+def _resolve_residual_action_indices(action_names: tuple, mode: str) -> tuple:
+    if mode == "all":
+        indices = tuple(range(len(action_names)))
+    elif mode == "fingers_only":
+        blocked = ("wrj", "forearm", "sustain")
+        indices = tuple(
+            i for i, name in enumerate(action_names)
+            if not any(tok in name.lower() for tok in blocked)
+        )
+    else:
+        raise ValueError(f"Unsupported residual_action_mode: {mode}")
+    if not indices:
+        raise ValueError("Residual action selection removed every action.")
+    return indices
+
+
+def _make_base_actor(spec: specs.EnvironmentSpec, args: Args) -> sac.TrainState:
+    template = sac.SAC.initialize(spec=spec, config=args.agent_config, seed=args.seed, discount=args.discount)
+    if args.base_checkpoint is None:
+        return template.actor
+    base = sac.SAC.load(args.base_checkpoint, template)
+    print(f"Loaded base actor from {args.base_checkpoint}")
+    return base.actor
+
 
 def _restore_step(path: Optional[Path]) -> int:
     if path is None:
@@ -162,12 +199,28 @@ def main(args: Args) -> None:
     checkpoint_dir = Path(args.root_dir) / "checkpoints" / run_name
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
-    agent = sac.SAC.initialize(
-        spec=spec,
-        config=args.agent_config,
-        seed=args.seed,
-        discount=args.discount,
-    )
+    if args.residual_alpha > 0:
+        residual_action_indices = _resolve_residual_action_indices(
+            _action_names(spec.action), args.residual_action_mode
+        )
+        print(f"Residual action mode: {args.residual_action_mode} ({len(residual_action_indices)} dims)")
+        base_actor = _make_base_actor(spec, args)
+        agent = sac.ResidualSAC.initialize(
+            spec=spec,
+            config=args.agent_config,
+            base_actor=base_actor,
+            seed=args.seed,
+            discount=args.discount,
+            residual_alpha=args.residual_alpha,
+            residual_action_indices=residual_action_indices,
+        )
+    else:
+        agent = sac.SAC.initialize(
+            spec=spec,
+            config=args.agent_config,
+            seed=args.seed,
+            discount=args.discount,
+        )
 
     replay_buffer = replay.Buffer(
         state_dim=spec.observation_dim,
@@ -215,9 +268,8 @@ def main(args: Args) -> None:
             log_dict = prefix_dict("eval", eval_env.get_statistics())
             vel_dict = prefix_dict("eval", eval_env.get_velocity_metrics())
             music_dict = prefix_dict("eval", eval_env.get_musical_metrics())
-            wandb.log(log_dict | music_dict | vel_dict | {"video": video}, step=i)
             video = wandb.Video(str(eval_env.latest_filename), fps=4, format="mp4")
-            wandb.log({"video": video, "global_step": i})
+            wandb.log(log_dict | music_dict | vel_dict | {"video": video}, step=i)
             eval_env.latest_filename.unlink()
 
         if i % args.checkpoint_interval == 0:
