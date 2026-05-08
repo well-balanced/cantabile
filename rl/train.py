@@ -15,6 +15,7 @@ import replay
 from robopianist import suite
 import dm_env_wrappers as wrappers
 import robopianist.wrappers as robopianist_wrappers
+import re
 
 
 @dataclass(frozen=True)
@@ -58,6 +59,18 @@ class Args:
     camera_id: Optional[str | int] = "piano/back"
     action_reward_observation: bool = False
     agent_config: sac.SACConfig = sac.SACConfig()
+    restore_checkpoint: Optional[Path] = None
+    checkpoint_interval: int = 500_000
+    velocity_reward_coef: float = 0.0
+    onset_accuracy_reward_coef: float = 0.0
+
+def _restore_step(path: Optional[Path]) -> int:
+    if path is None:
+        return 0
+    match = re.search(r"checkpoint_(\d+)\.flax$", str(path))
+    if match is None:
+        return 0
+    return int(match.group(1))
 
 
 def prefix_dict(prefix: str, d: dict) -> dict:
@@ -83,6 +96,8 @@ def get_env(args: Args, record_dir: Optional[Path] = None):
             disable_hand_collisions=args.disable_hand_collisions,
             primitive_fingertip_collisions=args.primitive_fingertip_collisions,
             change_color_on_activation=True,
+            velocity_reward_coef=args.velocity_reward_coef,
+            onset_accuracy_reward_coef=args.onset_accuracy_reward_coef,
         ),
     )
     if record_dir is not None:
@@ -144,6 +159,9 @@ def main(args: Args) -> None:
 
     spec = specs.EnvironmentSpec.make(env)
 
+    checkpoint_dir = Path(args.root_dir) / "checkpoints" / run_name
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+
     agent = sac.SAC.initialize(
         spec=spec,
         config=args.agent_config,
@@ -160,9 +178,10 @@ def main(args: Args) -> None:
 
     timestep = env.reset()
     replay_buffer.insert(timestep, None)
-
+    
+    start_step = _restore_step(args.restore_checkpoint)
     start_time = time.time()
-    for i in tqdm(range(1, args.max_steps + 1), disable=not args.tqdm_bar):
+    for i in tqdm(range(start_step + 1, args.max_steps + 1), disable=not args.tqdm_bar):
         # Act.
         if i < args.warmstart_steps:
             action = spec.sample_action(random_state=env.random_state)
@@ -194,11 +213,15 @@ def main(args: Args) -> None:
                 while not timestep.last():
                     timestep = eval_env.step(agent.eval_actions(timestep.observation))
             log_dict = prefix_dict("eval", eval_env.get_statistics())
+            vel_dict = prefix_dict("eval", eval_env.get_velocity_metrics())
             music_dict = prefix_dict("eval", eval_env.get_musical_metrics())
-            wandb.log(log_dict | music_dict, step=i)
+            wandb.log(log_dict | music_dict | vel_dict | {"video": video}, step=i)
             video = wandb.Video(str(eval_env.latest_filename), fps=4, format="mp4")
             wandb.log({"video": video, "global_step": i})
             eval_env.latest_filename.unlink()
+
+        if i % args.checkpoint_interval == 0:
+            agent.save(checkpoint_dir / f"checkpoint_{i}.flax")
 
         if i % args.log_interval == 0:
             wandb.log({"train/fps": int(i / (time.time() - start_time))}, step=i)
