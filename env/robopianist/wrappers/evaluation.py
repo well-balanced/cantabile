@@ -219,6 +219,9 @@ class MidiEvaluationWrapper(EnvironmentWrapper):
                 "velocity_std": float(np.std(robot_arr)),
                 "match_rate": len(matched) / max(len(trace), 1),
             })
+            if len(matched) >= 2:
+                corr_matrix = np.corrcoef(robot_arr, gt_arr)
+                result["velocity_correlation"] = float(corr_matrix[0, 1])
 
         if self._all_onset_accuracy:
             for key in ("hit_rate", "miss_rate", "fp_rate", "hold_rehit_rate"):
