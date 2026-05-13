@@ -12,7 +12,7 @@ from flax import serialization, struct
 from flax.training.train_state import TrainState
 
 from distributions import TanhNormal
-from networks import MLP, FiLMedMLP, Ensemble, StateActionValue, subsample_ensemble
+from networks import MLP, FiLMedMLP, AlphaHead, Ensemble, StateActionValue, subsample_ensemble
 from specs import EnvironmentSpec, zeros_like
 from replay import Transition
 
@@ -327,6 +327,7 @@ class ResidualSAC(struct.PyTreeNode):
 
     actor: TrainState
     base_actor: TrainState
+    alpha_head: Optional[TrainState]
     rng: Any
     critic: TrainState
     target_critic: TrainState
@@ -344,6 +345,7 @@ class ResidualSAC(struct.PyTreeNode):
     action_dim: int = struct.field(pytree_node=False)
     style_dim: int = struct.field(pytree_node=False)
     style_concat: bool = struct.field(pytree_node=False)
+    adaptive_alpha: bool = struct.field(pytree_node=False)
 
     @staticmethod
     def initialize(
@@ -356,6 +358,8 @@ class ResidualSAC(struct.PyTreeNode):
         residual_action_indices: Optional[Sequence[int]] = None,
         style_dim: int = 0,
         style_conditioning: str = "film",
+        adaptive_alpha: bool = False,
+        alpha_max: float = 1.0,
     ) -> "ResidualSAC":
         full_action_dim = spec.action.shape[-1]
         observations = zeros_like(spec.observation)
@@ -408,6 +412,21 @@ class ResidualSAC(struct.PyTreeNode):
             tx=optax.adam(learning_rate=config.actor_lr),
         )
 
+        if adaptive_alpha:
+            alpha_head_def = AlphaHead(alpha_max=alpha_max)
+            alpha_head_params = alpha_head_def.init(
+                actor_key,
+                obs_no_style,
+                jnp.zeros((style_dim,)) if style_dim > 0 else None,
+            )["params"]
+            alpha_head_ts = TrainState.create(
+                apply_fn=alpha_head_def.apply,
+                params=alpha_head_params,
+                tx=optax.adam(learning_rate=config.actor_lr),
+            )
+        else:
+            alpha_head_ts = None
+
         critic_base_cls = partial(
             MLP,
             hidden_dims=config.hidden_dims,
@@ -442,6 +461,7 @@ class ResidualSAC(struct.PyTreeNode):
         return ResidualSAC(
             actor=actor,
             base_actor=base_actor,
+            alpha_head=alpha_head_ts,
             rng=rng,
             critic=critic,
             target_critic=target_critic,
@@ -459,7 +479,15 @@ class ResidualSAC(struct.PyTreeNode):
             action_dim=full_action_dim,
             style_dim=style_dim,
             style_concat=use_concat,
+            adaptive_alpha=adaptive_alpha,
         )
+
+    def _get_alpha(self, alpha_params, observations: jnp.ndarray) -> jnp.ndarray:
+        """Returns per-sample α. Falls back to fixed residual_alpha if not adaptive."""
+        if not self.adaptive_alpha:
+            return self.residual_alpha
+        obs, z = self._split_style(observations)
+        return self.alpha_head.apply_fn({"params": alpha_params}, obs, z)
 
     def _base_actions(self, observations: jnp.ndarray) -> jnp.ndarray:
         # Base actor never sees the style dimensions appended at the end.
@@ -489,21 +517,26 @@ class ResidualSAC(struct.PyTreeNode):
         self,
         observations: jnp.ndarray,
         residual_actions: jnp.ndarray,
+        alpha_params=None,
     ) -> jnp.ndarray:
         base = self._base_actions(observations)
         full_residual = _expand_residual_actions(
             residual_actions, self.residual_action_indices, self.action_dim
         )
-        return _compose_actions(base, full_residual, self.residual_alpha, self.action_min, self.action_max)
+        alpha = self._get_alpha(alpha_params, observations)
+        # alpha may be scalar or (batch,); expand for broadcasting with full_residual.
+        alpha_bc = jnp.expand_dims(alpha, -1) if jnp.ndim(alpha) > 0 else alpha
+        return jnp.clip(base + alpha_bc * full_residual, self.action_min, self.action_max)
 
     def update_actor(self, transitions: Transition) -> tuple["ResidualSAC", LogDict]:
         key, rng = jax.random.split(self.rng)
         key2, rng = jax.random.split(rng)
 
-        def actor_loss_fn(actor_params):
+        def actor_loss_fn(params):
+            actor_params, alpha_params = params
             dist = self._call_actor(actor_params, transitions.state)
             residual_actions, log_probs = dist.sample_and_log_prob(seed=key)
-            actions = self._composed_actions(transitions.state, residual_actions)
+            actions = self._composed_actions(transitions.state, residual_actions, alpha_params)
             qs = self.critic.apply_fn(
                 {"params": self.critic.params},
                 transitions.state, actions, True,
@@ -513,11 +546,20 @@ class ResidualSAC(struct.PyTreeNode):
             actor_loss = (
                 log_probs * self.temp.apply_fn({"params": self.temp.params}) - q
             ).mean()
-            return actor_loss, {"actor_loss": actor_loss, "entropy": -log_probs.mean()}
+            alpha = self._get_alpha(alpha_params, transitions.state)
+            return actor_loss, {
+                "actor_loss": actor_loss,
+                "entropy": -log_probs.mean(),
+                "alpha_mean": alpha.mean() if jnp.ndim(alpha) > 0 else alpha,
+            }
 
-        grads, actor_info = jax.grad(actor_loss_fn, has_aux=True)(self.actor.params)
-        actor = self.actor.apply_gradients(grads=grads)
-        return self.replace(actor=actor, rng=rng), actor_info
+        alpha_params = self.alpha_head.params if self.adaptive_alpha else None
+        (actor_grads, alpha_grads), actor_info = jax.grad(actor_loss_fn, has_aux=True)(
+            (self.actor.params, alpha_params)
+        )
+        actor = self.actor.apply_gradients(grads=actor_grads)
+        alpha_head = self.alpha_head.apply_gradients(grads=alpha_grads) if self.adaptive_alpha else self.alpha_head
+        return self.replace(actor=actor, alpha_head=alpha_head, rng=rng), actor_info
 
     def update_temperature(self, entropy: float) -> tuple["ResidualSAC", LogDict]:
         def temperature_loss_fn(temp_params):
@@ -535,7 +577,8 @@ class ResidualSAC(struct.PyTreeNode):
         rng = self.rng
         key, rng = jax.random.split(rng)
         residual_next_actions, next_log_probs = dist.sample_and_log_prob(seed=key)
-        next_actions = self._composed_actions(transitions.next_state, residual_next_actions)
+        alpha_params = self.alpha_head.params if self.adaptive_alpha else None
+        next_actions = self._composed_actions(transitions.next_state, residual_next_actions, alpha_params)
 
         key, rng = jax.random.split(rng)
         target_params = subsample_ensemble(
@@ -593,7 +636,6 @@ class ResidualSAC(struct.PyTreeNode):
 
     def sample_actions(self, observations: np.ndarray) -> tuple["ResidualSAC", np.ndarray]:
         x, z = self._actor_obs(observations)
-        base_actions = self._base_actions(observations)
         if z is not None:
             residual_actions, new_rng = _sample_actions(
                 self.rng, self.actor.apply_fn, self.actor.params, x, z
@@ -602,28 +644,18 @@ class ResidualSAC(struct.PyTreeNode):
             residual_actions, new_rng = _sample_actions(
                 self.rng, self.actor.apply_fn, self.actor.params, x
             )
-        full_residual = _expand_residual_actions(
-            residual_actions, self.residual_action_indices, self.action_dim
-        )
-        actions = _compose_actions(
-            base_actions, full_residual, self.residual_alpha, self.action_min, self.action_max
-        )
+        alpha_params = self.alpha_head.params if self.adaptive_alpha else None
+        actions = self._composed_actions(observations, residual_actions, alpha_params)
         return self.replace(rng=new_rng), np.asarray(actions)
 
     def eval_actions(self, observations: np.ndarray) -> np.ndarray:
         x, z = self._actor_obs(observations)
-        base_actions = self._base_actions(observations)
         if z is not None:
             residual_actions = _eval_actions(self.actor.apply_fn, self.actor.params, x, z)
         else:
             residual_actions = _eval_actions(self.actor.apply_fn, self.actor.params, x)
-        full_residual = _expand_residual_actions(
-            residual_actions, self.residual_action_indices, self.action_dim
-        )
-        actions = _compose_actions(
-            base_actions, full_residual, self.residual_alpha, self.action_min, self.action_max
-        )
-        return np.asarray(actions)
+        alpha_params = self.alpha_head.params if self.adaptive_alpha else None
+        return np.asarray(self._composed_actions(observations, residual_actions, alpha_params))
 
     def save(self, path: "str | Path") -> None:
         from pathlib import Path

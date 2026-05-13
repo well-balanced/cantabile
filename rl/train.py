@@ -77,6 +77,8 @@ class Args:
     style_melody_gain_range: Tuple[float, float] = (1.0, 1.0)
     style_trend_range: Tuple[float, float] = (0.0, 0.0)
     style_conditioning: str = "film"  # "film" or "concat"
+    adaptive_alpha: bool = False
+    alpha_max: float = 1.0
 
 def _action_names(action_spec) -> tuple:
     if action_spec.name:
@@ -268,6 +270,8 @@ def main(args: Args) -> None:
             residual_action_indices=residual_action_indices,
             style_dim=style_dim,
             style_conditioning=args.style_conditioning,
+            adaptive_alpha=args.adaptive_alpha,
+            alpha_max=args.alpha_max,
         )
     else:
         agent = sac.SAC.initialize(

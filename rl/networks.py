@@ -93,6 +93,33 @@ class FiLMedMLP(nn.Module):
         return x
 
 
+class AlphaHead(nn.Module):
+    """Small MLP that outputs a per-sample residual trust coefficient α ∈ (0, α_max).
+
+    Input: concat(obs_no_style, z) if z is provided, else obs_no_style alone.
+    Output: α = α_max · sigmoid(logit), initialized near init_alpha via bias.
+    """
+
+    alpha_max: float = 1.0
+    hidden_dims: Sequence[int] = (64, 64)
+    init_alpha: float = 0.1
+
+    @nn.compact
+    def __call__(self, obs: jnp.ndarray, z: jnp.ndarray = None) -> jnp.ndarray:
+        x = obs if z is None else jnp.concatenate([obs, z], axis=-1)
+        for size in self.hidden_dims:
+            x = nn.Dense(size, kernel_init=default_init())(x)
+            x = nn.gelu(x)
+        # Initialize bias so sigmoid output ≈ init_alpha at the start.
+        init_logit = jnp.log(self.init_alpha / (1.0 - self.init_alpha))
+        logit = nn.Dense(
+            1,
+            kernel_init=nn.initializers.zeros,
+            bias_init=lambda *_: jnp.full((1,), init_logit),
+        )(x)
+        return self.alpha_max * nn.sigmoid(logit).squeeze(-1)
+
+
 class Ensemble(nn.Module):
     net_cls: nn.Module | Callable[..., nn.Module]
     num: int = 2
