@@ -14,6 +14,8 @@
 
 """A task where two shadow hands must play a given MIDI file on a piano."""
 
+from collections import defaultdict
+from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
@@ -48,6 +50,108 @@ _POSITION_OFFSET = 0.05
 
 # Onset accuracy reward constants.
 _ONSET_ACCURACY_HOLD_REHIT_GRACE_STEPS = 2
+
+# Velocity style transform constants.
+_V_MIN: int = 1
+_V_MAX: int = 127
+_MELODY_TOL: float = 0.010  # seconds, for grouping simultaneous notes
+
+
+@dataclass
+class StyleParams:
+    """Four-dimensional velocity style descriptor.
+
+    All parameters default to the identity transform (no change to score velocities).
+
+    velocity_scale:    α ∈ [0.6, 1.4]  — global loudness multiplier
+    velocity_contrast: γ ∈ [0.6, 1.4]  — dynamic range expansion/compression
+    melody_gain:       m ∈ [0.6, 1.4]  — melody voice multiplier
+    dynamic_trend:     k ∈ [-1.0, 1.0] — crescendo (+) / decrescendo (−) arc
+    """
+    velocity_scale: float = 1.0
+    velocity_contrast: float = 1.0
+    melody_gain: float = 1.0
+    dynamic_trend: float = 0.0
+
+    def to_array(self) -> np.ndarray:
+        return np.array(
+            [self.velocity_scale, self.velocity_contrast,
+             self.melody_gain, self.dynamic_trend],
+            dtype=np.float32,
+        )
+
+    @classmethod
+    def identity(cls) -> "StyleParams":
+        return cls()
+
+
+def _apply_style_to_velocity_maps(
+    notes: List,
+    params: StyleParams,
+    total_time: float,
+) -> Tuple[List[Dict[int, int]], List[Dict[int, int]]]:
+    """Apply style transforms to per-timestep velocity maps.
+
+    Returns (active_maps, onset_maps) with style-transformed MIDI velocities.
+    """
+    # Collect all velocities for stats.
+    all_vels = [int(note.velocity) for notes_t in notes for note in notes_t]
+    if not all_vels:
+        mu, sigma = 64.0, 1.0
+    else:
+        arr = np.array(all_vels, dtype=float)
+        mu, sigma = float(arr.mean()), float(arr.std()) + 1e-6
+
+    # Melody detection: per timestep, the highest MIDI number is melody.
+    # melody_set: set of (t_idx, key) pairs that are melody.
+    melody_set: set = set()
+    if abs(params.melody_gain - 1.0) > 1e-9:
+        for t_idx, notes_t in enumerate(notes):
+            if notes_t:
+                top = max(notes_t, key=lambda n: n.number)
+                melody_set.add((t_idx, top.key))
+
+    n_steps = len(notes)
+
+    def _transform(velocity: int, t_idx: int, key: int) -> int:
+        v = float(velocity)
+
+        # 1. velocity_scale: v' = α·v
+        v *= params.velocity_scale
+
+        # 2. velocity_contrast: v' = μ + γ(v − μ)
+        if abs(params.velocity_contrast - 1.0) > 1e-9:
+            v = mu + params.velocity_contrast * (v - mu)
+
+        # 3. melody_gain: multiply melody notes only
+        if (t_idx, key) in melody_set:
+            v *= params.melody_gain
+
+        # 4. dynamic_trend (crescendo/decrescendo):
+        #    z = (v−μ)/σ, t∈[0,1], z' = clip(z + k(2t−1), −2, 2), v' = μ + σ·z'
+        if abs(params.dynamic_trend) > 1e-9:
+            t_norm = t_idx / max(n_steps - 1, 1)
+            z = (v - mu) / sigma
+            z = float(np.clip(z + params.dynamic_trend * (2.0 * t_norm - 1.0), -2.0, 2.0))
+            v = mu + sigma * z
+
+        return int(np.clip(round(v), _V_MIN, _V_MAX))
+
+    active_maps: List[Dict[int, int]] = []
+    onset_maps: List[Dict[int, int]] = []
+    prev_active_keys: set = set()
+
+    for t_idx, notes_t in enumerate(notes):
+        active_map = {
+            note.key: _transform(int(note.velocity), t_idx, note.key)
+            for note in notes_t
+        }
+        onset_map = {k: v for k, v in active_map.items() if k not in prev_active_keys}
+        active_maps.append(active_map)
+        onset_maps.append(onset_map)
+        prev_active_keys = set(active_map)
+
+    return active_maps, onset_maps
 _ONSET_ACCURACY_HIT_BONUS = 0.30
 _ONSET_ACCURACY_MISS_PENALTY = 0.10
 _ONSET_ACCURACY_OFFSCORE_FP_PENALTY = 0.05
@@ -73,6 +177,8 @@ class PianoWithShadowHands(base.PianoTask):
         velocity_reward_coef: float = 0.0,
         onset_accuracy_reward_coef: float = 0.0,
         n_steps_velocity_lookahead: int = 2,
+        style_params: Optional[StyleParams] = None,
+        style_params_choices: Optional[Sequence[StyleParams]] = None,
         **kwargs,
     ) -> None:
         """Task constructor.
@@ -135,6 +241,9 @@ class PianoWithShadowHands(base.PianoTask):
         self._velocity_reward_coef = velocity_reward_coef
         self._onset_accuracy_reward_coef = onset_accuracy_reward_coef
         self._n_steps_velocity_lookahead = n_steps_velocity_lookahead
+        self._style_params = style_params if style_params is not None else StyleParams.identity()
+        self._style_params_choices = tuple(style_params_choices) if style_params_choices else ()
+        self._current_style = self._style_params
 
         if not disable_fingering_reward and not disable_colorization:
             self._colorize_fingertips()
@@ -196,8 +305,18 @@ class PianoWithShadowHands(base.PianoTask):
         self, physics: mjcf.Physics, random_state: np.random.RandomState
     ) -> None:
         self._maybe_change_midi(random_state)
+        if self._style_params_choices:
+            self._current_style = self._style_params_choices[
+                random_state.randint(len(self._style_params_choices))
+            ]
+        else:
+            self._current_style = self._style_params
         self._reset_quantities_at_episode_init()
         self._randomize_initial_hand_positions(physics, random_state)
+
+    @property
+    def current_style(self) -> StyleParams:
+        return self._current_style
 
     def before_step(
         self,
@@ -396,20 +515,10 @@ class PianoWithShadowHands(base.PianoTask):
         return float(np.mean(rews))
 
     def _precompute_score_velocity_maps(self) -> None:
-        self._score_active_velocity_maps: List[Dict[int, int]] = []
-        self._score_true_onset_velocity_maps: List[Dict[int, int]] = []
-
-        prev_active_keys: set = set()
-        for notes in self._notes:
-            active_velocity_map = {note.key: int(note.velocity) for note in notes}
-            true_onset_velocity_map = {
-                key: vel
-                for key, vel in active_velocity_map.items()
-                if key not in prev_active_keys
-            }
-            self._score_active_velocity_maps.append(active_velocity_map)
-            self._score_true_onset_velocity_maps.append(true_onset_velocity_map)
-            prev_active_keys = set(active_velocity_map)
+        total_time = self._midi.duration
+        self._score_active_velocity_maps, self._score_true_onset_velocity_maps = (
+            _apply_style_to_velocity_maps(self._notes, self._current_style, total_time)
+        )
 
     def _score_active_velocity_map(self, t_idx: int) -> Dict[int, int]:
         if 0 <= t_idx < len(self._score_active_velocity_maps):
@@ -569,7 +678,7 @@ class PianoWithShadowHands(base.PianoTask):
         fingering_observable.enabled = not self._disable_fingering_reward
         self._task_observables["fingering"] = fingering_observable
 
-        # This returns the GT velocity goal for the current timestep and n steps ahead.
+        # Returns style-transformed velocity targets for current + n lookahead steps.
         def _get_velocity_goal_state(physics) -> np.ndarray:
             del physics  # Unused.
             n = self._n_steps_velocity_lookahead + 1
@@ -579,13 +688,22 @@ class PianoWithShadowHands(base.PianoTask):
             t_start = self._t_idx
             t_end = min(t_start + n, len(self._notes))
             for i, t in enumerate(range(t_start, t_end)):
-                for note in self._notes[t]:
-                    result[i, note.key] = note.velocity / 127.0
+                for key, vel in self._score_active_velocity_maps[t].items():
+                    result[i, key] = vel / 127.0
             return result.ravel()
 
         velocity_goal_observable = observable.Generic(_get_velocity_goal_state)
         velocity_goal_observable.enabled = True
         self._task_observables["velocity_goal"] = velocity_goal_observable
+
+        # Style vector observation: [velocity_scale, velocity_contrast, melody_gain, dynamic_trend]
+        def _get_style_state(physics) -> np.ndarray:
+            del physics  # Unused.
+            return self._current_style.to_array()
+
+        style_observable = observable.Generic(_get_style_state)
+        style_observable.enabled = True
+        self._task_observables["style"] = style_observable
 
     def _colorize_fingertips(self) -> None:
         """Colorize the fingertips of the hands."""

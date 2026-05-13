@@ -12,7 +12,7 @@ from flax import serialization, struct
 from flax.training.train_state import TrainState
 
 from distributions import TanhNormal
-from networks import MLP, Ensemble, StateActionValue, subsample_ensemble
+from networks import MLP, FiLMedMLP, Ensemble, StateActionValue, subsample_ensemble
 from specs import EnvironmentSpec, zeros_like
 from replay import Transition
 
@@ -33,16 +33,16 @@ class Temperature(nn.Module):
 
 @partial(jax.jit, static_argnames="apply_fn")
 def _sample_actions(
-    rng, apply_fn, params, observations: np.ndarray
+    rng, apply_fn, params, observations: np.ndarray, style: np.ndarray = None
 ) -> tuple[jnp.ndarray, Any]:
     key, rng = jax.random.split(rng)
-    dist = apply_fn({"params": params}, observations)
+    dist = apply_fn({"params": params}, observations) if style is None else apply_fn({"params": params}, observations, style)
     return dist.sample(seed=key), rng
 
 
 @partial(jax.jit, static_argnames="apply_fn")
-def _eval_actions(apply_fn, params, observations: np.ndarray) -> jnp.ndarray:
-    dist = apply_fn({"params": params}, observations)
+def _eval_actions(apply_fn, params, observations: np.ndarray, style: np.ndarray = None) -> jnp.ndarray:
+    dist = apply_fn({"params": params}, observations) if style is None else apply_fn({"params": params}, observations, style)
     return dist.mode()
 
 
@@ -342,6 +342,8 @@ class ResidualSAC(struct.PyTreeNode):
     residual_alpha: float = struct.field(pytree_node=False)
     residual_action_indices: tuple = struct.field(pytree_node=False)
     action_dim: int = struct.field(pytree_node=False)
+    style_dim: int = struct.field(pytree_node=False)
+    style_concat: bool = struct.field(pytree_node=False)
 
     @staticmethod
     def initialize(
@@ -352,6 +354,8 @@ class ResidualSAC(struct.PyTreeNode):
         discount: float = 0.99,
         residual_alpha: float = 0.1,
         residual_action_indices: Optional[Sequence[int]] = None,
+        style_dim: int = 0,
+        style_conditioning: str = "film",
     ) -> "ResidualSAC":
         full_action_dim = spec.action.shape[-1]
         observations = zeros_like(spec.observation)
@@ -368,18 +372,36 @@ class ResidualSAC(struct.PyTreeNode):
         rng = jax.random.PRNGKey(seed)
         rng, actor_key, critic_key, temp_key = jax.random.split(rng, 4)
 
-        # Residual actor input: concat(obs, base_actions).
-        base_actions = _eval_actions(base_actor.apply_fn, base_actor.params, observations)
-        actor_inputs = jnp.concatenate([observations, base_actions], axis=-1)
+        # Residual actor input: concat(obs_without_style, base_actions).
+        # Style vector z is split off; fed via FiLM or naive concat depending on style_conditioning.
+        use_film = style_dim > 0 and style_conditioning == "film"
+        use_concat = style_dim > 0 and style_conditioning == "concat"
+        obs_no_style = observations[:-style_dim] if style_dim > 0 else observations
+        base_actions = _eval_actions(base_actor.apply_fn, base_actor.params, obs_no_style)
+        actor_inputs = jnp.concatenate([obs_no_style, base_actions], axis=-1)
 
-        actor_base_cls = partial(
-            MLP,
-            hidden_dims=config.hidden_dims,
-            activation=getattr(nn, config.activation),
-            activate_final=True,
-        )
-        actor_def = TanhNormal(actor_base_cls, residual_action_dim)
-        actor_params = actor_def.init(actor_key, actor_inputs)["params"]
+        if use_film:
+            actor_base_cls = partial(
+                FiLMedMLP,
+                hidden_dims=config.hidden_dims,
+                style_dim=style_dim,
+                activation=getattr(nn, config.activation),
+                activate_final=True,
+            )
+            actor_def = TanhNormal(actor_base_cls, residual_action_dim)
+            z_dummy = jnp.zeros((style_dim,))
+            actor_params = actor_def.init(actor_key, actor_inputs, z_dummy)["params"]
+        else:
+            actor_base_cls = partial(
+                MLP,
+                hidden_dims=config.hidden_dims,
+                activation=getattr(nn, config.activation),
+                activate_final=True,
+            )
+            actor_def = TanhNormal(actor_base_cls, residual_action_dim)
+            # For naive concat: z is appended to actor_inputs directly.
+            init_inputs = jnp.concatenate([actor_inputs, jnp.zeros((style_dim,))], axis=-1) if use_concat else actor_inputs
+            actor_params = actor_def.init(actor_key, init_inputs)["params"]
         actor = TrainState.create(
             apply_fn=actor_def.apply,
             params=actor_params,
@@ -435,13 +457,33 @@ class ResidualSAC(struct.PyTreeNode):
             residual_alpha=residual_alpha,
             residual_action_indices=residual_action_indices,
             action_dim=full_action_dim,
+            style_dim=style_dim,
+            style_concat=use_concat,
         )
 
     def _base_actions(self, observations: jnp.ndarray) -> jnp.ndarray:
-        return _eval_actions(self.base_actor.apply_fn, self.base_actor.params, observations)
+        # Base actor never sees the style dimensions appended at the end.
+        obs = observations[..., :-self.style_dim] if self.style_dim > 0 else observations
+        return _eval_actions(self.base_actor.apply_fn, self.base_actor.params, obs)
 
-    def _actor_inputs(self, observations: jnp.ndarray) -> jnp.ndarray:
-        return jnp.concatenate([observations, self._base_actions(observations)], axis=-1)
+    def _split_style(self, observations: jnp.ndarray):
+        """Returns (obs_without_style, style_z). style_z is None if style_dim=0."""
+        if self.style_dim > 0:
+            return observations[..., :-self.style_dim], observations[..., -self.style_dim:]
+        return observations, None
+
+    def _actor_inputs(self, observations: jnp.ndarray):
+        """Returns (x, z) for the residual actor. z is None when style_dim=0."""
+        obs, z = self._split_style(observations)
+        base_actions = self._base_actions(observations)
+        x = jnp.concatenate([obs, base_actions], axis=-1)
+        return x, z
+
+    def _call_actor(self, actor_params, observations: jnp.ndarray):
+        x, z = self._actor_obs(observations)
+        if z is not None:
+            return self.actor.apply_fn({"params": actor_params}, x, z)
+        return self.actor.apply_fn({"params": actor_params}, x)
 
     def _composed_actions(
         self,
@@ -459,8 +501,7 @@ class ResidualSAC(struct.PyTreeNode):
         key2, rng = jax.random.split(rng)
 
         def actor_loss_fn(actor_params):
-            actor_inputs = self._actor_inputs(transitions.state)
-            dist = self.actor.apply_fn({"params": actor_params}, actor_inputs)
+            dist = self._call_actor(actor_params, transitions.state)
             residual_actions, log_probs = dist.sample_and_log_prob(seed=key)
             actions = self._composed_actions(transitions.state, residual_actions)
             qs = self.critic.apply_fn(
@@ -489,8 +530,7 @@ class ResidualSAC(struct.PyTreeNode):
         return self.replace(temp=temp), temp_info
 
     def update_critic(self, transitions: Transition) -> tuple["ResidualSAC", LogDict]:
-        actor_inputs = self._actor_inputs(transitions.next_state)
-        dist = self.actor.apply_fn({"params": self.actor.params}, actor_inputs)
+        dist = self._call_actor(self.actor.params, transitions.next_state)
 
         rng = self.rng
         key, rng = jax.random.split(rng)
@@ -544,12 +584,24 @@ class ResidualSAC(struct.PyTreeNode):
         new_agent, temp_info = new_agent.update_temperature(actor_info["entropy"])
         return new_agent, {**actor_info, **critic_info, **temp_info}
 
+    def _actor_obs(self, observations: np.ndarray):
+        """Returns (actor_x, actor_z) where actor_z is None for concat/no-style modes."""
+        x, z = self._actor_inputs(observations)
+        if z is not None and self.style_concat:
+            return jnp.concatenate([x, z], axis=-1), None
+        return x, z
+
     def sample_actions(self, observations: np.ndarray) -> tuple["ResidualSAC", np.ndarray]:
+        x, z = self._actor_obs(observations)
         base_actions = self._base_actions(observations)
-        actor_inputs = jnp.concatenate([observations, base_actions], axis=-1)
-        residual_actions, new_rng = _sample_actions(
-            self.rng, self.actor.apply_fn, self.actor.params, actor_inputs
-        )
+        if z is not None:
+            residual_actions, new_rng = _sample_actions(
+                self.rng, self.actor.apply_fn, self.actor.params, x, z
+            )
+        else:
+            residual_actions, new_rng = _sample_actions(
+                self.rng, self.actor.apply_fn, self.actor.params, x
+            )
         full_residual = _expand_residual_actions(
             residual_actions, self.residual_action_indices, self.action_dim
         )
@@ -559,9 +611,12 @@ class ResidualSAC(struct.PyTreeNode):
         return self.replace(rng=new_rng), np.asarray(actions)
 
     def eval_actions(self, observations: np.ndarray) -> np.ndarray:
+        x, z = self._actor_obs(observations)
         base_actions = self._base_actions(observations)
-        actor_inputs = jnp.concatenate([observations, base_actions], axis=-1)
-        residual_actions = _eval_actions(self.actor.apply_fn, self.actor.params, actor_inputs)
+        if z is not None:
+            residual_actions = _eval_actions(self.actor.apply_fn, self.actor.params, x, z)
+        else:
+            residual_actions = _eval_actions(self.actor.apply_fn, self.actor.params, x)
         full_residual = _expand_residual_actions(
             residual_actions, self.residual_action_indices, self.action_dim
         )

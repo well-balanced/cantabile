@@ -16,6 +16,7 @@ from flax import serialization
 from robopianist import suite
 import dm_env_wrappers as wrappers
 import robopianist.wrappers as robopianist_wrappers
+from robopianist.suite.tasks.piano_with_shadow_hands import StyleParams
 import re
 
 
@@ -68,6 +69,14 @@ class Args:
     base_checkpoint: Optional[Path] = None
     residual_alpha: float = 0.0
     residual_action_mode: str = "fingers_only"
+    # Style conditioning options.
+    # Uniform sampling ranges per dimension; each is (low, high).
+    # If all ranges are identity (1,1)/(0,0) no style transform is applied.
+    style_scale_range: Tuple[float, float] = (1.0, 1.0)
+    style_contrast_range: Tuple[float, float] = (1.0, 1.0)
+    style_melody_gain_range: Tuple[float, float] = (1.0, 1.0)
+    style_trend_range: Tuple[float, float] = (0.0, 0.0)
+    style_conditioning: str = "film"  # "film" or "concat"
 
 def _action_names(action_spec) -> tuple:
     if action_spec.name:
@@ -93,8 +102,19 @@ def _resolve_residual_action_indices(action_names: tuple, mode: str) -> tuple:
     return indices
 
 
-def _make_base_actor(spec: specs.EnvironmentSpec, args: Args) -> sac.TrainState:
-    template = sac.SAC.initialize(spec=spec, config=args.agent_config, seed=args.seed, discount=args.discount)
+def _make_base_actor(spec: specs.EnvironmentSpec, args: Args, style_dim: int = 0) -> sac.TrainState:
+    if style_dim > 0:
+        from dm_env import specs as dm_specs
+        obs_spec = spec.observation
+        reduced_obs = dm_specs.Array(
+            shape=(obs_spec.shape[0] - style_dim,),
+            dtype=obs_spec.dtype,
+            name=obs_spec.name,
+        )
+        base_spec = specs.EnvironmentSpec(observation=reduced_obs, action=spec.action)
+    else:
+        base_spec = spec
+    template = sac.SAC.initialize(spec=base_spec, config=args.agent_config, seed=args.seed, discount=args.discount)
     if args.base_checkpoint is None:
         return template.actor
     sidecar = Path(str(args.base_checkpoint).replace(".flax", "_actor.flax"))
@@ -121,6 +141,29 @@ def prefix_dict(prefix: str, d: dict) -> dict:
     return {f"{prefix}/{k}": v for k, v in d.items()}
 
 
+def _make_style_choices(args: Args, n: int = 64) -> Optional[list]:
+    """Sample n StyleParams from the configured uniform ranges.
+
+    Returns None if all ranges are identity (no style conditioning).
+    """
+    s_lo, s_hi = args.style_scale_range
+    c_lo, c_hi = args.style_contrast_range
+    m_lo, m_hi = args.style_melody_gain_range
+    t_lo, t_hi = args.style_trend_range
+    if s_lo == s_hi and c_lo == c_hi and m_lo == m_hi and t_lo == t_hi:
+        return None
+    rng = np.random.default_rng(seed=0)
+    return [
+        StyleParams(
+            velocity_scale=float(rng.uniform(s_lo, s_hi)),
+            velocity_contrast=float(rng.uniform(c_lo, c_hi)),
+            melody_gain=float(rng.uniform(m_lo, m_hi)),
+            dynamic_trend=float(rng.uniform(t_lo, t_hi)),
+        )
+        for _ in range(n)
+    ]
+
+
 def get_env(args: Args, record_dir: Optional[Path] = None):
     env = suite.load(
         environment_name=args.environment_name,
@@ -142,6 +185,7 @@ def get_env(args: Args, record_dir: Optional[Path] = None):
             change_color_on_activation=True,
             velocity_reward_coef=args.velocity_reward_coef,
             onset_accuracy_reward_coef=args.onset_accuracy_reward_coef,
+            style_params_choices=_make_style_choices(args),
         ),
     )
     if record_dir is not None:
@@ -211,7 +255,9 @@ def main(args: Args) -> None:
             _action_names(spec.action), args.residual_action_mode
         )
         print(f"Residual action mode: {args.residual_action_mode} ({len(residual_action_indices)} dims)")
-        base_actor = _make_base_actor(spec, args)
+        style_choices = _make_style_choices(args)
+        style_dim = 4 if style_choices is not None else 0
+        base_actor = _make_base_actor(spec, args, style_dim=style_dim)
         agent = sac.ResidualSAC.initialize(
             spec=spec,
             config=args.agent_config,
@@ -220,6 +266,8 @@ def main(args: Args) -> None:
             discount=args.discount,
             residual_alpha=args.residual_alpha,
             residual_action_indices=residual_action_indices,
+            style_dim=style_dim,
+            style_conditioning=args.style_conditioning,
         )
     else:
         agent = sac.SAC.initialize(

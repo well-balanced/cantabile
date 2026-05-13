@@ -48,6 +48,51 @@ class StateActionValue(nn.Module):
         return jnp.squeeze(value, -1)
 
 
+class FiLMedMLP(nn.Module):
+    """MLP with FiLM conditioning: h_l ← γ_l ⊙ h_l + β_l.
+
+    The conditioning vector z is embedded by a small MLP into per-layer
+    (γ, β) pairs that modulate each hidden layer of the main network.
+    """
+
+    hidden_dims: Sequence[int]
+    style_dim: int
+    film_hidden: int = 64
+    activation: Callable[[jnp.ndarray], jnp.ndarray] = nn.gelu
+    activate_final: bool = False
+    use_layer_norm: bool = False
+    dropout_rate: Optional[float] = None
+
+    @nn.compact
+    def __call__(
+        self, x: jnp.ndarray, z: jnp.ndarray, training: bool = False
+    ) -> jnp.ndarray:
+        # One (γ, β) pair per hidden layer, produced by a shared MLP over z.
+        film_h = nn.Dense(self.film_hidden, kernel_init=default_init())(z)
+        film_h = nn.gelu(film_h)
+        film_h = nn.Dense(self.film_hidden, kernel_init=default_init())(film_h)
+        film_h = nn.gelu(film_h)
+
+        for i, size in enumerate(self.hidden_dims):
+            x = nn.Dense(size, kernel_init=default_init())(x)
+
+            if i + 1 < len(self.hidden_dims) or self.activate_final:
+                if self.dropout_rate is not None and self.dropout_rate > 0:
+                    x = nn.Dropout(rate=self.dropout_rate)(
+                        x, deterministic=not training
+                    )
+                if self.use_layer_norm:
+                    x = nn.LayerNorm()(x)
+                x = self.activation(x)
+
+                # FiLM: predict (γ, β) for this layer from the shared film embedding.
+                gamma = nn.Dense(size, kernel_init=default_init(),
+                                 bias_init=nn.initializers.ones)(film_h)
+                beta = nn.Dense(size, kernel_init=default_init())(film_h)
+                x = gamma * x + beta
+        return x
+
+
 class Ensemble(nn.Module):
     net_cls: nn.Module | Callable[..., nn.Module]
     num: int = 2
