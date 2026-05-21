@@ -549,6 +549,10 @@ def gymnopedie_no_1() -> midi_file.MidiFile:
     return midi_file.MidiFile.from_file(_DATA_PATH / "pig_single_finger" / "gymnopedie_no_1-1.proto")
 
 
+def for_elise() -> midi_file.MidiFile:
+    return midi_file.MidiFile.from_file(_DATA_PATH / "pig_single_finger" / "for_elise-1.proto")
+
+
 MIDI_NAME_TO_CALLABLE: Dict[str, Callable[[], midi_file.MidiFile]] = {
     "TwinkleTwinkleLittleStar": twinkle_twinkle_little_star_one_hand,
     "CMajorScaleOneHand": c_major_scale_one_hand,
@@ -560,4 +564,5 @@ MIDI_NAME_TO_CALLABLE: Dict[str, Callable[[], midi_file.MidiFile]] = {
     "NocturneRousseau": nocturne_rousseau,
     "ClairDeLune": clair_de_lune,
     "GymnopedieNo1": gymnopedie_no_1,
+    "ForElise": for_elise,
 }
