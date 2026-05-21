@@ -33,7 +33,7 @@ class Args:
     tqdm_bar: bool = False
     replay_capacity: int = 1_000_000
     project: str = "cantabile"
-    entity: str = ""
+    entity: str = "cantabile"
     name: str = ""
     tags: str = ""
     notes: str = ""
