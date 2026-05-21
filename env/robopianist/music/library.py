@@ -553,6 +553,18 @@ def for_elise() -> midi_file.MidiFile:
     return midi_file.MidiFile.from_file(_DATA_PATH / "pig_single_finger" / "for_elise-1.proto")
 
 
+def prelude_op_28_no_7() -> midi_file.MidiFile:
+    return midi_file.MidiFile.from_file(_DATA_PATH / "pig_single_finger" / "prelude_op_28_no_7-1.proto")
+
+
+def waltz_op_64_no_1() -> midi_file.MidiFile:
+    return midi_file.MidiFile.from_file(_DATA_PATH / "pig_single_finger" / "waltz_op_64_no_1-1.proto")
+
+
+def berceuse() -> midi_file.MidiFile:
+    return midi_file.MidiFile.from_file(_DATA_PATH / "pig_single_finger" / "berceuse-1.proto")
+
+
 MIDI_NAME_TO_CALLABLE: Dict[str, Callable[[], midi_file.MidiFile]] = {
     "TwinkleTwinkleLittleStar": twinkle_twinkle_little_star_one_hand,
     "CMajorScaleOneHand": c_major_scale_one_hand,
@@ -565,4 +577,7 @@ MIDI_NAME_TO_CALLABLE: Dict[str, Callable[[], midi_file.MidiFile]] = {
     "ClairDeLune": clair_de_lune,
     "GymnopedieNo1": gymnopedie_no_1,
     "ForElise": for_elise,
+    "PreludeOp28No7": prelude_op_28_no_7,
+    "WaltzOp64No1": waltz_op_64_no_1,
+    "Berceuse": berceuse,
 }
