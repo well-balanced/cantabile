@@ -1,20 +1,40 @@
-Group,Run Name,Phase,Song,Method,Seed,velocity_reward_coef,onset_accuracy_reward_coef,hold_rehit_penalty,Base Checkpoint,Status,Notes
-contour_val,contour_val-twinkle-flat,1,twinkle,contour_val,—,—,—,—,checkpoints/base/twinkle/seed0,not started,eval only / flat velocity override
-contour_val,contour_val-twinkle-gt,1,twinkle,contour_val,—,—,—,—,checkpoints/base/twinkle/seed0,not started,eval only / GT velocity
-contour_val,contour_val-twinkle-soft,1,twinkle,contour_val,—,—,—,—,checkpoints/base/twinkle/seed0,not started,eval only / GT × 0.5
-contour_val,contour_val-twinkle-loud,1,twinkle,contour_val,—,—,—,—,checkpoints/base/twinkle/seed0,not started,eval only / GT × 1.5
-base,base-twinkle-s0,1,twinkle,base,0,0.0,0.0,—,—,not started,
-base,base-clair-s0,1,clair,base,0,0.0,0.0,—,—,not started,
-base,base-nocturne-s0,1,nocturne,base,0,0.0,0.0,—,—,not started,
-base_residual,base_residual-twinkle-s0,1,twinkle,base_residual,0,0.5,0.5,0.5,checkpoints/base/twinkle/seed0,not started,
-base_residual,base_residual-clair-s0,1,clair,base_residual,0,0.5,0.5,0.5,checkpoints/base/clair/seed0,not started,
-base_residual,base_residual-nocturne-s0,1,nocturne,base_residual,0,0.5,0.5,0.5,checkpoints/base/nocturne/seed0,not started,
-vel_aware,vel_aware-twinkle-s0,2,twinkle,vel_aware,0,0.2,0.5,0.5,—,not started,
-vel_aware,vel_aware-clair-s0,2,clair,vel_aware,0,0.2,0.5,0.5,—,not started,
-vel_aware,vel_aware-nocturne-s0,2,nocturne,vel_aware,0,0.2,0.5,0.5,—,not started,
-vel_aware_residual,vel_aware_residual-twinkle-s0,2,twinkle,vel_aware_residual,0,0.5,0.5,0.5,checkpoints/vel_aware/twinkle/seed0,not started,
-vel_aware_residual,vel_aware_residual-clair-s0,2,clair,vel_aware_residual,0,0.5,0.5,0.5,checkpoints/vel_aware/clair/seed0,not started,
-vel_aware_residual,vel_aware_residual-nocturne-s0,2,nocturne,vel_aware_residual,0,0.5,0.5,0.5,checkpoints/vel_aware/nocturne/seed0,not started,
-abl_dof,abl_dof-fingers-twinkle-s0,3,twinkle,base_residual,0,0.5,0.5,0.5,checkpoints/base/twinkle/seed0,not started,dof=fingers_only
-abl_dof,abl_dof-wrist-twinkle-s0,3,twinkle,base_residual,0,0.5,0.5,0.5,checkpoints/base/twinkle/seed0,not started,dof=fingers_wrist
-abl_dof,abl_dof-full-twinkle-s0,3,twinkle,base_residual,0,0.5,0.5,0.5,checkpoints/base/twinkle/seed0,not started,dof=full
+Status,priority,Group,Run Name,Phase,Song,Method,Seed,velocity_reward_coef,onset_accuracy_reward_coef,hold_rehit_penalty,Base Checkpoint,Notes
+not started,3,contour_val,contour_val-twinkle-flat,1,twinkle,contour_val,—,—,—,—,checkpoints/base/twinkle/seed0,eval only / flat velocity override
+not started,3,contour_val,contour_val-twinkle-gt,1,twinkle,contour_val,—,—,—,—,checkpoints/base/twinkle/seed0,eval only / GT velocity
+not started,3,contour_val,contour_val-twinkle-soft,1,twinkle,contour_val,—,—,—,—,checkpoints/base/twinkle/seed0,eval only / GT × 0.5
+not started,3,contour_val,contour_val-twinkle-loud,1,twinkle,contour_val,—,—,—,—,checkpoints/base/twinkle/seed0,eval only / GT × 1.5
+not started,0,base,base-twinkle-s0,1,twinkle,base,0,0,0,—,—,
+not started,0,base,base-clair-s0,1,clair,base,0,0,0,—,—,
+not started,0,base,base-nocturne-s0,1,nocturne,base,0,0,0,—,—,
+not started,1,base_residual,base_residual-twinkle-s0,1,twinkle,base_residual,0,0.5,0.5,0.5,checkpoints/base/twinkle/seed0,
+not started,1,base_residual,base_residual-clair-s0,1,clair,base_residual,0,0.5,0.5,0.5,checkpoints/base/clair/seed0,
+not started,1,base_residual,base_residual-nocturne-s0,1,nocturne,base_residual,0,0.5,0.5,0.5,checkpoints/base/nocturne/seed0,
+not started,0,vel_aware,vel_aware-twinkle-s0,2,twinkle,vel_aware,0,0.2,0.5,0.5,—,
+not started,0,vel_aware,vel_aware-clair-s0,2,clair,vel_aware,0,0.2,0.5,0.5,—,
+not started,0,vel_aware,vel_aware-nocturne-s0,2,nocturne,vel_aware,0,0.2,0.5,0.5,—,
+not started,1,vel_aware_residual,vel_aware_residual-twinkle-s0,2,twinkle,vel_aware_residual,0,0.5,0.5,0.5,checkpoints/vel_aware/twinkle/seed0,
+not started,1,vel_aware_residual,vel_aware_residual-clair-s0,2,clair,vel_aware_residual,0,0.5,0.5,0.5,checkpoints/vel_aware/clair/seed0,
+not started,1,vel_aware_residual,vel_aware_residual-nocturne-s0,2,nocturne,vel_aware_residual,0,0.5,0.5,0.5,checkpoints/vel_aware/nocturne/seed0,
+not started,2,abl_dof,abl_dof-fingers-twinkle-s0,3,twinkle,base_residual,0,0.5,0.5,0.5,checkpoints/base/twinkle/seed0,dof=fingers_only
+not started,2,abl_dof,abl_dof-wrist-twinkle-s0,3,twinkle,base_residual,0,0.5,0.5,0.5,checkpoints/base/twinkle/seed0,dof=fingers_wrist
+not started,2,abl_dof,abl_dof-full-twinkle-s0,3,twinkle,base_residual,0,0.5,0.5,0.5,checkpoints/base/twinkle/seed0,dof=full
+not started,4,base,base-gymno-s0,1,gymnopedie,base,0,0,0,—,—,
+not started,4,base,base-forelise-s0,1,forelise,base,0,0,0,—,—,
+not started,4,base,base-prelude-s0,1,prelude,base,0,0,0,—,—,
+not started,4,base,base-waltz-s0,1,waltz,base,0,0,0,—,—,
+not started,4,base,base-berceuse-s0,1,berceuse,base,0,0,0,—,—,
+not started,4,base_residual,base_residual-gymno-s0,1,gymnopedie,base_residual,0,0.5,0.5,0.5,checkpoints/base/gymno/seed0,
+not started,4,base_residual,base_residual-forelise-s0,1,forelise,base_residual,0,0.5,0.5,0.5,checkpoints/base/forelise/seed0,
+not started,4,base_residual,base_residual-prelude-s0,1,prelude,base_residual,0,0.5,0.5,0.5,checkpoints/base/prelude/seed0,
+not started,4,base_residual,base_residual-waltz-s0,1,waltz,base_residual,0,0.5,0.5,0.5,checkpoints/base/waltz/seed0,
+not started,4,base_residual,base_residual-berceuse-s0,1,berceuse,base_residual,0,0.5,0.5,0.5,checkpoints/base/berceuse/seed0,
+not started,4,vel_aware,vel_aware-gymno-s0,2,gymnopedie,vel_aware,0,0.2,0.5,0.5,—,
+not started,4,vel_aware,vel_aware-forelise-s0,2,forelise,vel_aware,0,0.2,0.5,0.5,—,
+not started,4,vel_aware,vel_aware-prelude-s0,2,prelude,vel_aware,0,0.2,0.5,0.5,—,
+not started,4,vel_aware,vel_aware-waltz-s0,2,waltz,vel_aware,0,0.2,0.5,0.5,—,
+not started,4,vel_aware,vel_aware-berceuse-s0,2,berceuse,vel_aware,0,0.2,0.5,0.5,—,
+not started,4,vel_aware_residual,vel_aware_residual-gymno-s0,2,gymnopedie,vel_aware_residual,0,0.5,0.5,0.5,checkpoints/vel_aware/gymno/seed0,
+not started,4,vel_aware_residual,vel_aware_residual-forelise-s0,2,forelise,vel_aware_residual,0,0.5,0.5,0.5,checkpoints/vel_aware/forelise/seed0,
+not started,4,vel_aware_residual,vel_aware_residual-prelude-s0,2,prelude,vel_aware_residual,0,0.5,0.5,0.5,checkpoints/vel_aware/prelude/seed0,
+not started,4,vel_aware_residual,vel_aware_residual-waltz-s0,2,waltz,vel_aware_residual,0,0.5,0.5,0.5,checkpoints/vel_aware/waltz/seed0,
+not started,4,vel_aware_residual,vel_aware_residual-berceuse-s0,2,berceuse,vel_aware_residual,0,0.5,0.5,0.5,checkpoints/vel_aware/berceuse/seed0,
