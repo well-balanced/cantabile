@@ -214,6 +214,7 @@ class MidiEvaluationWrapper(EnvironmentWrapper):
             errors = robot_arr - gt_arr
             result.update({
                 "velocity_mae": float(np.mean(np.abs(errors))),
+                "velocity_rmse": float(np.sqrt(np.mean(errors ** 2))),
                 "velocity_bias": float(np.mean(errors)),
                 "velocity_std": float(np.std(robot_arr)),
                 "match_rate": len(matched) / max(len(trace), 1),

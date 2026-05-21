@@ -541,16 +541,12 @@ def nocturne_rousseau() -> midi_file.MidiFile:
     return midi
 
 
-def firststep_1() -> midi_file.MidiFile:
-    return midi_file.MidiFile.from_file(_DATA_PATH / "firststep" / "firststep-1.mid")
+def clair_de_lune() -> midi_file.MidiFile:
+    return midi_file.MidiFile.from_file(_DATA_PATH / "pig_single_finger" / "clair_de_lune-1.proto")
 
 
-def firststep_2() -> midi_file.MidiFile:
-    return midi_file.MidiFile.from_file(_DATA_PATH / "firststep" / "firststep-2.mid")
-
-
-def firststep_3() -> midi_file.MidiFile:
-    return midi_file.MidiFile.from_file(_DATA_PATH / "firststep" / "firststep-3.mid")
+def gymnopedie_no_1() -> midi_file.MidiFile:
+    return midi_file.MidiFile.from_file(_DATA_PATH / "pig_single_finger" / "gymnopedie_no_1-1.proto")
 
 
 MIDI_NAME_TO_CALLABLE: Dict[str, Callable[[], midi_file.MidiFile]] = {
@@ -562,7 +558,6 @@ MIDI_NAME_TO_CALLABLE: Dict[str, Callable[[], midi_file.MidiFile]] = {
     "CMajorChordProgressionTwoHands": c_major_chord_progression_two_hands,
     "TwinkleTwinkleRousseau": twinkle_twinkle_rousseau,
     "NocturneRousseau": nocturne_rousseau,
-    "Firststep1": firststep_1,
-    "Firststep2": firststep_2,
-    "Firststep3": firststep_3,
+    "ClairDeLune": clair_de_lune,
+    "GymnopedieNo1": gymnopedie_no_1,
 }
