@@ -64,6 +64,8 @@ class Args:
     checkpoint_interval: int = 500_000
     velocity_reward_coef: float = 0.0
     onset_accuracy_reward_coef: float = 0.0
+    onset_hit_bonus: float = 1.0
+    onset_hold_rehit_penalty: float = 0.5
     # Residual RL options.
     base_checkpoint: Optional[Path] = None
     residual_alpha: float = 0.0
@@ -142,6 +144,8 @@ def get_env(args: Args, record_dir: Optional[Path] = None):
             change_color_on_activation=True,
             velocity_reward_coef=args.velocity_reward_coef,
             onset_accuracy_reward_coef=args.onset_accuracy_reward_coef,
+            onset_hit_bonus=args.onset_hit_bonus,
+            onset_hold_rehit_penalty=args.onset_hold_rehit_penalty,
         ),
     )
     if record_dir is not None:

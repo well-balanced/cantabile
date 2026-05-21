@@ -48,10 +48,8 @@ _POSITION_OFFSET = 0.05
 
 # Onset accuracy reward constants.
 _ONSET_ACCURACY_HOLD_REHIT_GRACE_STEPS = 2
-_ONSET_ACCURACY_HIT_BONUS = 0.30
-_ONSET_ACCURACY_MISS_PENALTY = 0.10
-_ONSET_ACCURACY_OFFSCORE_FP_PENALTY = 0.05
-_ONSET_ACCURACY_HOLD_REHIT_PENALTY = 0.20
+_ONSET_ACCURACY_HIT_BONUS = 1.0
+_ONSET_ACCURACY_HOLD_REHIT_PENALTY = 0.5
 
 
 class PianoWithShadowHands(base.PianoTask):
@@ -72,6 +70,8 @@ class PianoWithShadowHands(base.PianoTask):
         randomize_hand_positions: bool = False,
         velocity_reward_coef: float = 0.0,
         onset_accuracy_reward_coef: float = 0.0,
+        onset_hit_bonus: float = _ONSET_ACCURACY_HIT_BONUS,
+        onset_hold_rehit_penalty: float = _ONSET_ACCURACY_HOLD_REHIT_PENALTY,
         n_steps_velocity_lookahead: int = 2,
         **kwargs,
     ) -> None:
@@ -107,6 +107,8 @@ class PianoWithShadowHands(base.PianoTask):
                 hands at the beginning of each episode.
             velocity_reward_coef: Coefficient for the velocity reward.
             onset_accuracy_reward_coef: Coefficient for the onset accuracy reward.
+            onset_hit_bonus: Weight for the hit_rate term in onset accuracy reward.
+            onset_hold_rehit_penalty: Weight for the hold_rehit_rate penalty term.
             n_steps_velocity_lookahead: Number of timesteps to look ahead in the
                 velocity goal observable.
         """
@@ -134,6 +136,8 @@ class PianoWithShadowHands(base.PianoTask):
         self._randomize_hand_positions = randomize_hand_positions
         self._velocity_reward_coef = velocity_reward_coef
         self._onset_accuracy_reward_coef = onset_accuracy_reward_coef
+        self._onset_hit_bonus = onset_hit_bonus
+        self._onset_hold_rehit_penalty = onset_hold_rehit_penalty
         self._n_steps_velocity_lookahead = n_steps_velocity_lookahead
 
         if not disable_fingering_reward and not disable_colorization:
@@ -457,22 +461,18 @@ class PianoWithShadowHands(base.PianoTask):
 
     def _get_onset_accuracy_rates(
         self, new_onsets: np.ndarray, t_idx: int
-    ) -> Tuple[float, float, float, float]:
+    ) -> Tuple[float, float]:
         robot_onset_keys = {int(key) for key in np.flatnonzero(new_onsets)}
         gt_true_onset_keys = set(self._score_true_onset_velocity_map(t_idx))
         gt_active_keys = set(self._score_active_velocity_map(t_idx))
 
         hit_count = len(robot_onset_keys & gt_true_onset_keys)
-        miss_count = len(gt_true_onset_keys - robot_onset_keys)
         hold_rehit_count = len(robot_onset_keys & (gt_active_keys - gt_true_onset_keys))
-        offscore_fp_count = len(robot_onset_keys - gt_active_keys)
 
         gt_onset_denom = max(len(gt_true_onset_keys), 1)
         robot_onset_denom = max(len(robot_onset_keys), 1)
         return (
             hit_count / gt_onset_denom,
-            miss_count / gt_onset_denom,
-            offscore_fp_count / robot_onset_denom,
             hold_rehit_count / robot_onset_denom,
         )
 
@@ -481,18 +481,14 @@ class PianoWithShadowHands(base.PianoTask):
         new_onsets = self.piano.activation & ~self._prev_activation
         t = self._t_idx - 1
 
-        hit_rate, miss_rate, offscore_fp_rate, hold_rehit_rate = (
-            self._get_onset_accuracy_rates(new_onsets, t)
-        )
+        hit_rate, hold_rehit_rate = self._get_onset_accuracy_rates(new_onsets, t)
 
         if t < _ONSET_ACCURACY_HOLD_REHIT_GRACE_STEPS:
             hold_rehit_rate = 0.0
 
         raw_reward = (
-            _ONSET_ACCURACY_HIT_BONUS * hit_rate
-            - _ONSET_ACCURACY_MISS_PENALTY * miss_rate
-            - _ONSET_ACCURACY_OFFSCORE_FP_PENALTY * offscore_fp_rate
-            - _ONSET_ACCURACY_HOLD_REHIT_PENALTY * hold_rehit_rate
+            self._onset_hit_bonus * hit_rate
+            - self._onset_hold_rehit_penalty * hold_rehit_rate
         )
         return self._onset_accuracy_reward_coef * raw_reward
 
