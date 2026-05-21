@@ -88,6 +88,12 @@ def _resolve_residual_action_indices(action_names: tuple, mode: str) -> tuple:
             i for i, name in enumerate(action_names)
             if not any(tok in name.lower() for tok in blocked)
         )
+    elif mode == "fingers_wrist":
+        blocked = ("forearm", "sustain")
+        indices = tuple(
+            i for i, name in enumerate(action_names)
+            if not any(tok in name.lower() for tok in blocked)
+        )
     else:
         raise ValueError(f"Unsupported residual_action_mode: {mode}")
     if not indices:
