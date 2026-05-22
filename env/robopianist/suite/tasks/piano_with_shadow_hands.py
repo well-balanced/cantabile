@@ -47,9 +47,7 @@ _FINGERTIP_ALPHA = 1.0
 _POSITION_OFFSET = 0.05
 
 # Onset accuracy reward constants.
-_ONSET_ACCURACY_HOLD_REHIT_GRACE_STEPS = 2
 _ONSET_ACCURACY_HIT_BONUS = 1.0
-_ONSET_ACCURACY_HOLD_REHIT_PENALTY = 0.5
 
 
 class PianoWithShadowHands(base.PianoTask):
@@ -71,7 +69,6 @@ class PianoWithShadowHands(base.PianoTask):
         velocity_reward_coef: float = 0.0,
         onset_accuracy_reward_coef: float = 0.0,
         onset_hit_bonus: float = _ONSET_ACCURACY_HIT_BONUS,
-        onset_hold_rehit_penalty: float = _ONSET_ACCURACY_HOLD_REHIT_PENALTY,
         n_steps_velocity_lookahead: int = 2,
         **kwargs,
     ) -> None:
@@ -108,7 +105,6 @@ class PianoWithShadowHands(base.PianoTask):
             velocity_reward_coef: Coefficient for the velocity reward.
             onset_accuracy_reward_coef: Coefficient for the onset accuracy reward.
             onset_hit_bonus: Weight for the hit_rate term in onset accuracy reward.
-            onset_hold_rehit_penalty: Weight for the hold_rehit_rate penalty term.
             n_steps_velocity_lookahead: Number of timesteps to look ahead in the
                 velocity goal observable.
         """
@@ -137,7 +133,6 @@ class PianoWithShadowHands(base.PianoTask):
         self._velocity_reward_coef = velocity_reward_coef
         self._onset_accuracy_reward_coef = onset_accuracy_reward_coef
         self._onset_hit_bonus = onset_hit_bonus
-        self._onset_hold_rehit_penalty = onset_hold_rehit_penalty
         self._n_steps_velocity_lookahead = n_steps_velocity_lookahead
 
         if not disable_fingering_reward and not disable_colorization:
@@ -461,35 +456,21 @@ class PianoWithShadowHands(base.PianoTask):
 
     def _get_onset_accuracy_rates(
         self, new_onsets: np.ndarray, t_idx: int
-    ) -> Tuple[float, float]:
+    ) -> float:
         robot_onset_keys = {int(key) for key in np.flatnonzero(new_onsets)}
         gt_true_onset_keys = set(self._score_true_onset_velocity_map(t_idx))
-        gt_active_keys = set(self._score_active_velocity_map(t_idx))
 
         hit_count = len(robot_onset_keys & gt_true_onset_keys)
-        hold_rehit_count = len(robot_onset_keys & (gt_active_keys - gt_true_onset_keys))
-
         gt_onset_denom = max(len(gt_true_onset_keys), 1)
-        robot_onset_denom = max(len(robot_onset_keys), 1)
-        return (
-            hit_count / gt_onset_denom,
-            hold_rehit_count / robot_onset_denom,
-        )
+        return hit_count / gt_onset_denom
 
     def _compute_onset_accuracy_reward(self, physics: mjcf.Physics) -> float:
         del physics  # Unused.
         new_onsets = self.piano.activation & ~self._prev_activation
         t = self._t_idx - 1
 
-        hit_rate, hold_rehit_rate = self._get_onset_accuracy_rates(new_onsets, t)
-
-        if t < _ONSET_ACCURACY_HOLD_REHIT_GRACE_STEPS:
-            hold_rehit_rate = 0.0
-
-        raw_reward = (
-            self._onset_hit_bonus * hit_rate
-            - self._onset_hold_rehit_penalty * hold_rehit_rate
-        )
+        hit_rate = self._get_onset_accuracy_rates(new_onsets, t)
+        raw_reward = self._onset_hit_bonus * hit_rate
         return self._onset_accuracy_reward_coef * raw_reward
 
     def _update_goal_state(self) -> None:

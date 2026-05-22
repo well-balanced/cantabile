@@ -11,7 +11,6 @@
 # Hyperparameter overrides (method defaults apply if omitted):
 #   --vel <float>    velocity_reward_coef
 #   --onset <float>  onset_accuracy_reward_coef
-#   --rehit <float>  onset_hold_rehit_penalty
 #   --alpha <float>  residual_alpha
 #
 # Examples:
@@ -31,7 +30,6 @@ DRY_RUN=false
 # Override sentinels (empty = use method default)
 OVR_VEL=""
 OVR_ONSET=""
-OVR_REHIT=""
 OVR_ALPHA=""
 
 while [[ $# -gt 0 ]]; do
@@ -44,7 +42,6 @@ while [[ $# -gt 0 ]]; do
         --suffix)   SUFFIX="$2";    shift 2 ;;
         --vel)      OVR_VEL="$2";   shift 2 ;;
         --onset)    OVR_ONSET="$2"; shift 2 ;;
-        --rehit)    OVR_REHIT="$2"; shift 2 ;;
         --alpha)    OVR_ALPHA="$2"; shift 2 ;;
         --dry-run)  DRY_RUN=true;   shift   ;;
         *) echo "Unknown argument: $1"; exit 1 ;;
@@ -74,21 +71,18 @@ case $METHOD in
     base)
         VEL=0.0
         ONSET=0.0
-        REHIT=0.5
         RUN_NAME="base-${SONG}-s${SEED}"
         GROUP="base"
         ;;
     vel_aware)
         VEL=0.2
         ONSET=0.5
-        REHIT=0.5
         RUN_NAME="vel_aware-${SONG}-s${SEED}"
         GROUP="vel_aware"
         ;;
     base_residual)
         VEL=0.5
         ONSET=0.5
-        REHIT=0.5
         BASE_CKPT="./checkpoints/base/${SONG}/seed${SEED}/checkpoint_5000000.flax"
         RESIDUAL_ARGS="--residual-alpha 0.2 --residual-action-mode fingers_only --base-checkpoint ${BASE_CKPT}"
         RUN_NAME="base_residual-${SONG}-s${SEED}"
@@ -97,7 +91,6 @@ case $METHOD in
     vel_aware_residual)
         VEL=0.5
         ONSET=0.5
-        REHIT=0.5
         BASE_CKPT="./checkpoints/vel_aware/${SONG}/seed${SEED}/checkpoint_5000000.flax"
         RESIDUAL_ARGS="--residual-alpha 0.2 --residual-action-mode fingers_only --base-checkpoint ${BASE_CKPT}"
         RUN_NAME="vel_aware_residual-${SONG}-s${SEED}"
@@ -106,7 +99,6 @@ case $METHOD in
     abl_dof)
         VEL=0.5
         ONSET=0.5
-        REHIT=0.5
         BASE_CKPT="./checkpoints/base/${SONG}/seed${SEED}/checkpoint_5000000.flax"
         case $DOF in
             fingers_only)  DOF_TAG="fingers" ;;
@@ -128,7 +120,6 @@ esac
 # Apply hyperparameter overrides.
 [[ -n "$OVR_VEL" ]]   && VEL="$OVR_VEL"
 [[ -n "$OVR_ONSET" ]] && ONSET="$OVR_ONSET"
-[[ -n "$OVR_REHIT" ]] && REHIT="$OVR_REHIT"
 if [[ -n "$OVR_ALPHA" && -n "$RESIDUAL_ARGS" ]]; then
     RESIDUAL_ARGS=$(echo "$RESIDUAL_ARGS" | sed "s/--residual-alpha [^ ]*/--residual-alpha ${OVR_ALPHA}/")
 fi
@@ -137,7 +128,7 @@ fi
 
 echo "Launching: ${RUN_NAME} on GPU ${GPU}"
 echo "  env:     ${ENV}"
-echo "  vel:     ${VEL}  onset: ${ONSET}  rehit: ${REHIT}"
+echo "  vel:     ${VEL}  onset: ${ONSET}"
 [[ -n "$RESIDUAL_ARGS" ]] && echo "  residual: ${RESIDUAL_ARGS}"
 
 if [[ "$DRY_RUN" == "true" ]]; then
@@ -173,7 +164,6 @@ conda run -n cantabile --no-capture-output python train.py \
     --checkpoint-interval 500000 \
     --velocity-reward-coef $VEL \
     --onset-accuracy-reward-coef $ONSET \
-    --onset-hold-rehit-penalty $REHIT \
     --name "$RUN_NAME" \
     --tags "$GROUP" \
     $RESIDUAL_ARGS

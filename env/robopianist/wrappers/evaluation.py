@@ -76,7 +76,6 @@ class MidiEvaluationWrapper(EnvironmentWrapper):
         self._ep_hits: int = 0
         self._ep_misses: int = 0
         self._ep_fp: int = 0          # robot onsets on non-score-active keys
-        self._ep_hold_rehits: int = 0  # robot onsets on already-held keys
         self._all_onset_accuracy: Deque[Dict[str, float]] = deque(maxlen=deque_size)
 
     def step(self, action: np.ndarray) -> dm_env.TimeStep:
@@ -116,7 +115,6 @@ class MidiEvaluationWrapper(EnvironmentWrapper):
                 "hit_rate": self._ep_hits / gt_onsets,
                 "miss_rate": self._ep_misses / gt_onsets,
                 "fp_rate": self._ep_fp / robot_onsets,
-                "hold_rehit_rate": self._ep_hold_rehits / robot_onsets,
             })
 
             self._key_presses = []
@@ -126,7 +124,6 @@ class MidiEvaluationWrapper(EnvironmentWrapper):
             self._ep_hits = 0
             self._ep_misses = 0
             self._ep_fp = 0
-            self._ep_hold_rehits = 0
         return timestep
 
     def reset(self) -> dm_env.TimeStep:
@@ -137,7 +134,6 @@ class MidiEvaluationWrapper(EnvironmentWrapper):
         self._ep_hits = 0
         self._ep_misses = 0
         self._ep_fp = 0
-        self._ep_hold_rehits = 0
         return self._environment.reset()
 
     def _record_onset_step(
@@ -168,7 +164,6 @@ class MidiEvaluationWrapper(EnvironmentWrapper):
         self._ep_hits += len(new_onset_keys & gt_onset_keys)
         self._ep_misses += len(gt_onset_keys - new_onset_keys)
         self._ep_fp += len(new_onset_keys - gt_active_keys)
-        self._ep_hold_rehits += len(new_onset_keys & (gt_active_keys - gt_onset_keys))
 
         score_sustain = bool(task._sustains[t]) if 0 <= t < len(task._sustains) else False
 
@@ -224,7 +219,7 @@ class MidiEvaluationWrapper(EnvironmentWrapper):
                 result["velocity_correlation"] = float(corr_matrix[0, 1])
 
         if self._all_onset_accuracy:
-            for key in ("hit_rate", "miss_rate", "fp_rate", "hold_rehit_rate"):
+            for key in ("hit_rate", "miss_rate", "fp_rate"):
                 result[f"onset_{key}"] = float(
                     np.mean([ep[key] for ep in self._all_onset_accuracy])
                 )
