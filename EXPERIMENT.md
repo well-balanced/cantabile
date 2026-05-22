@@ -53,7 +53,7 @@ final_eval_episodes: 20
 final_eval_deterministic: true
 ```
 
-Onset accuracy sub-weights (all methods that use it): `hit=1.0, hold_rehit=0.5`.
+Onset accuracy sub-weights (all methods that use it): `hit=1.0`.
 
 ---
 
@@ -101,9 +101,9 @@ name:    "{group_id}-{song}-s{seed}"
 
 ### Group 2 — Base
 
-**Rationale:** Establish the note accuracy ceiling before any velocity objective is introduced. This policy is also used as the frozen base for Group 3 and Group 5. Without a strong base, residual experiments are confounded — a weak base means residual must compensate for poor note accuracy, not just add velocity control.
+**Rationale:** Establish the note accuracy ceiling before any velocity objective is introduced. This policy is also used as the frozen base for base_residual. Without a strong base, the base_residual ablation is confounded — a weak base forces the residual to compensate for poor note accuracy rather than adding velocity control.
 
-**Verifies:** Reference for RQ2, RQ3, RQ4. Establishes that note accuracy is achievable before adding velocity complexity.
+**Verifies:** Reference for RQ2, RQ3, RQ4.
 
 **Reward:** `velocity_reward_coef=0.0`, `onset_accuracy_reward_coef=0.0`
 
@@ -119,35 +119,11 @@ name:    "{group_id}-{song}-s{seed}"
 
 ---
 
-### Group 3 — Base + Residual *(main method)*
+### Group 3 — Vel-Aware (end-to-end baseline)
 
-**Rationale:** Core contribution. Freeze the base policy and train a small residual actor with velocity and onset rewards. The residual can only modulate finger actions by ±α — it cannot undo what the base does. This structural constraint is why F1 should be preserved: the base's note-hitting behavior is frozen, and the residual only fine-tunes keystroke intensity. The onset accuracy reward additionally pushes match rate above the base, expanding the set of notes available for velocity optimization.
+**Rationale:** Train the full policy end-to-end with both velocity and onset accuracy rewards. This is the simplest approach to adding velocity awareness and serves as the base policy for the main method (vel_aware_residual). It also reveals the core tension: velocity reward competes with note accuracy when optimized jointly, causing F1 to drop relative to base.
 
-**Verifies:** RQ2 (match rate ↑ via onset reward), RQ3 (vel MAE ↓ via velocity reward), RQ4 (F1 preserved by frozen base + structural constraint).
-
-**Reward:** `velocity_reward_coef=0.5`, `onset_accuracy_reward_coef=0.5`
-
-**W&B runs:**
-
-| Group | Run name |
-|-------|----------|
-| `base_residual` | `base_residual-twinkle-s0` |
-| `base_residual` | `base_residual-clair-s0` |
-| `base_residual` | `base_residual-nocturne-s0` |
-
-**Expected result:**
-- Match rate > Group 2 (onset reward expands the pie)
-- Onset F1 ≥ Group 2, ideally higher (onset reward actively improves accuracy)
-- Vel MAE lower than Group 2 (velocity reward effective on expanded match set)
-- Key F1 ≈ Group 2 (frozen base + small α preserves non-onset behavior)
-
----
-
-### Group 4 — Vel-Aware (end-to-end baseline)
-
-**Rationale:** Compare against a simpler baseline: train the full policy end-to-end with both velocity and onset accuracy rewards, without freezing any part of the network. This answers whether the residual structure is necessary, or whether just adding the right rewards to a full policy achieves the same result. Expected to be less stable than Group 3 because the policy must simultaneously learn note accuracy and velocity dynamics from scratch without the structural protection of a frozen base.
-
-**Verifies:** RQ3 and RQ4 from a different angle. If Group 4 performs similarly to Group 3, the residual structure adds little. If Group 4 shows higher F1 variance or velocity reward crowding out accuracy, it validates the residual design.
+**Verifies:** RQ2, RQ3. Establishes the tension between velocity learning and note accuracy (motivates residual approach). Also provides the frozen base for Group 5.
 
 **Reward:** `velocity_reward_coef=0.2`, `onset_accuracy_reward_coef=0.5`
 
@@ -160,17 +136,40 @@ name:    "{group_id}-{song}-s{seed}"
 | `vel_aware` | `vel_aware-nocturne-s0` |
 
 **Expected result:**
-- Match rate and onset F1 > Group 2 (onset reward active)
-- Vel MAE improved but training less stable than Group 3
-- F1 may show higher variance across songs; risk of velocity reward crowding out accuracy on harder songs
+- Match rate and onset F1 > base (onset reward active)
+- Velocity MAE improved over base
+- F1 slightly lower than base — velocity reward crowds out accuracy; this tension motivates the residual approach
 
 ---
 
-### Group 5 — Vel-Aware + Residual
+### Group 4 — Base + Residual *(ablation)*
 
-**Rationale:** Test whether the residual approach generalizes — does it add further improvement even when the base already has velocity awareness? If yes, the residual is not just a shortcut for a weak base but a generally useful fine-tuning mechanism. If no, the residual's benefit is specific to F1-only bases and the structural constraint is doing the work.
+**Rationale:** Freeze the base policy (F1-only, no velocity awareness) and train a residual actor with velocity and onset rewards. This ablation isolates the contribution of the residual architecture from the contribution of the vel_aware base. Comparing base_residual vs vel_aware_residual answers: how much does starting from a velocity-aware base matter? Comparing base_residual vs vel_aware answers: is residual on a naive base better or worse than end-to-end velocity training?
 
-**Verifies:** Generalizability of residual (extends RQ4). Provides the Group 4 vs Group 5 comparison.
+**Verifies:** Partial RQ4. Isolates the residual architecture's contribution independent of base quality.
+
+**Reward:** `velocity_reward_coef=0.5`, `onset_accuracy_reward_coef=0.5`
+
+**W&B runs:**
+
+| Group | Run name |
+|-------|----------|
+| `base_residual` | `base_residual-twinkle-s0` |
+| `base_residual` | `base_residual-clair-s0` |
+| `base_residual` | `base_residual-nocturne-s0` |
+
+**Expected result:**
+- F1 ≈ base (frozen base + small α preserves note accuracy)
+- Velocity MAE better than base, but worse than vel_aware_residual (base has no prior velocity knowledge)
+- Together with vel_aware_residual, shows that vel_aware base provides meaningful signal for the residual to build on
+
+---
+
+### Group 5 — Vel-Aware + Residual *(main method)*
+
+**Rationale:** Freeze the vel_aware policy and train a residual actor on top. The vel_aware base already understands velocity contours to some degree; the residual only needs to refine. This two-stage approach achieves the best of both worlds: the vel_aware base provides velocity-relevant representations, while the frozen + residual structure prevents the velocity objective from crowding out note accuracy. Expected to be the best method on velocity metrics while maintaining F1 at or near base level.
+
+**Verifies:** RQ3, RQ4. Main contribution.
 
 **Reward:** `velocity_reward_coef=0.5`, `onset_accuracy_reward_coef=0.5`
 **Base:** `checkpoints/vel_aware/{song}/seed0`
@@ -184,9 +183,10 @@ name:    "{group_id}-{song}-s{seed}"
 | `vel_aware_residual` | `vel_aware_residual-nocturne-s0` |
 
 **Expected result:**
-- Vel MAE further improved vs Group 4
-- Match rate and onset F1 maintained or slightly improved
-- If this group does not outperform Group 4, residual on vel_aware base provides no benefit — still informative as a negative result
+- Velocity MAE lowest across all methods
+- Velocity correlation highest across all methods
+- F1 ≈ base (frozen base + small α), similar to base_residual
+- This validates the two-stage design: vel_aware pre-training provides velocity-relevant representations, residual fine-tuning refines without sacrificing accuracy
 
 ---
 
@@ -196,13 +196,13 @@ name:    "{group_id}-{song}-s{seed}"
 
 **Verifies:** Whether the `fingers_only` constraint is necessary for F1 preservation, or just a conservative default.
 
-**Reward:** Same as Group 3. **Base:** `checkpoints/base/twinkle/seed0`
+**Reward:** Same as Group 5. **Base:** `checkpoints/base/twinkle/seed0`
 
 **W&B runs:**
 
 | Group | Run name | DOFs |
 |-------|----------|------|
-| `abl_dof` | `abl_dof-fingers-twinkle-s0` | fingers only (same as Group 3 — reference) |
+| `abl_dof` | `abl_dof-fingers-twinkle-s0` | fingers only (same as Group 5 — reference) |
 | `abl_dof` | `abl_dof-wrist-twinkle-s0` | fingers + wrist |
 | `abl_dof` | `abl_dof-full-twinkle-s0` | all DOFs |
 
@@ -217,10 +217,16 @@ name:    "{group_id}-{song}-s{seed}"
 
 | Method | Match Rate ↑ | Onset F1 ↑ | Key F1 ↑ | Vel MAE ↓ | Vel Corr ↑ |
 |--------|-------------|-----------|---------|----------|-----------|
-| base (G2) | ref | ref | ref | — | — |
-| base_residual (G3) | | | | | |
-| vel_aware (G4) | | | | | |
-| vel_aware_residual (G5) | | | | | |
+| base | ref | ref | ref | — | — |
+| vel_aware | | | | | |
+| base_residual (ablation) | | | | | |
+| **vel_aware_residual (ours)** | | | | | |
+
+Key comparisons:
+- **vel_aware vs base**: does velocity reward help? (RQ3)
+- **vel_aware vs vel_aware_residual**: does residual fine-tuning improve over end-to-end? (RQ4)
+- **base_residual vs vel_aware_residual**: how much does the vel_aware base contribute? (attribution)
+- **base_residual vs vel_aware**: is residual on naive base competitive with end-to-end?
 
 ---
 
@@ -271,7 +277,6 @@ diagnostics:
   - mean_robot_velocity
   - mean_gt_velocity
   - num_matched_onsets
-  - onset_hold_rehit_rate
 ```
 
 ---
@@ -289,17 +294,17 @@ diagnostics:
   - `base-clair-s0`
   - `base-nocturne-s0`
 
-- **G3 — Base + Residual**
-  - `base_residual-twinkle-s0`
-  - `base_residual-clair-s0`
-  - `base_residual-nocturne-s0`
-
-- **G4 — Vel-Aware**
+- **G3 — Vel-Aware** *(end-to-end baseline, also base for main method)*
   - `vel_aware-twinkle-s0`
   - `vel_aware-clair-s0`
   - `vel_aware-nocturne-s0`
 
-- **G5 — Vel-Aware + Residual**
+- **G4 — Base + Residual** *(ablation)*
+  - `base_residual-twinkle-s0`
+  - `base_residual-clair-s0`
+  - `base_residual-nocturne-s0`
+
+- **G5 — Vel-Aware + Residual** *(main method)*
   - `vel_aware_residual-twinkle-s0`
   - `vel_aware_residual-clair-s0`
   - `vel_aware_residual-nocturne-s0`
@@ -314,13 +319,16 @@ diagnostics:
 ## Run Priority
 
 ```
-Phase 1:  G2 → G3        3 + 3 runs
-Gate:     match_rate ↑, onset_f1 ↑, vel_mae ↓ vs G2
+Phase 1:  base → vel_aware          3 + 3 runs
+Gate:     vel_aware shows velocity improvement with some F1 cost vs base
 
-Phase 2:  G4 → G5        3 + 3 runs
-Gate:     compare G3 vs G4 stability
+Phase 2:  vel_aware_residual        3 runs   (main method, needs vel_aware checkpoint)
+Gate:     vel MAE lowest, F1 ≈ base
 
-Phase 3:  G6             3 runs, twinkle only
+Phase 3:  base_residual             3 runs   (ablation, needs base checkpoint)
+Gate:     F1 preserved, vel MAE between base and vel_aware_residual
 
-Phase 4:  Paper-grade, seeds 0/1/2 on G2–G5      36 runs total
+Phase 4:  DOF ablation              3 runs, twinkle only
+
+Phase 5:  Paper-grade, seeds 0/1/2 on all methods    36 runs total
 ```
