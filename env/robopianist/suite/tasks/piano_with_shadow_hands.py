@@ -14,6 +14,7 @@
 
 """A task where two shadow hands must play a given MIDI file on a piano."""
 
+from dataclasses import dataclass
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
@@ -48,6 +49,78 @@ _POSITION_OFFSET = 0.05
 
 # Onset accuracy reward constants.
 _ONSET_ACCURACY_HIT_BONUS = 1.0
+
+
+@dataclass
+class StyleParams:
+    """Velocity style descriptor.
+
+    velocity_scale:    α — global loudness multiplier (identity: 1.0)
+    velocity_bias:     β — global loudness offset (identity: 0.0)
+    velocity_contrast: γ — dynamic range expansion/compression (identity: 1.0)
+    dynamic_trend:     k — crescendo (+) / decrescendo (−) arc (identity: 0.0)
+    """
+    velocity_scale: float = 1.0
+    velocity_bias: float = 0.0
+    velocity_contrast: float = 1.0
+    dynamic_trend: float = 0.0
+
+    @classmethod
+    def identity(cls) -> "StyleParams":
+        return cls()
+
+
+def _apply_style_to_velocity_maps(
+    notes: List,
+    params: StyleParams,
+) -> Tuple[List[Dict[int, int]], List[Dict[int, int]]]:
+    """Apply style transforms to per-timestep velocity maps.
+
+    Returns (active_maps, onset_maps) with style-transformed MIDI velocities.
+    """
+    all_vels = [int(note.velocity) for notes_t in notes for note in notes_t]
+    if not all_vels:
+        mu, sigma = 64.0, 1.0
+    else:
+        arr = np.array(all_vels, dtype=float)
+        mu, sigma = float(arr.mean()), float(arr.std()) + 1e-6
+
+    n_steps = len(notes)
+
+    def _transform(velocity: int, t_idx: int) -> int:
+        v = float(velocity)
+
+        # 1. velocity_scale + bias: v' = α·v + β
+        v = params.velocity_scale * v + params.velocity_bias
+
+        # 2. velocity_contrast: v' = μ + γ(v − μ)
+        if abs(params.velocity_contrast - 1.0) > 1e-9:
+            v = mu + params.velocity_contrast * (v - mu)
+
+        # 3. dynamic_trend: z = (v−μ)/σ, t∈[0,1], z' = clip(z + k(2t−1), −2, 2)
+        if abs(params.dynamic_trend) > 1e-9:
+            t_norm = t_idx / max(n_steps - 1, 1)
+            z = (v - mu) / sigma
+            z = float(np.clip(z + params.dynamic_trend * (2.0 * t_norm - 1.0), -2.0, 2.0))
+            v = mu + sigma * z
+
+        return int(np.clip(round(v), MIN_KEY_VEL, MAX_KEY_VEL))
+
+    active_maps: List[Dict[int, int]] = []
+    onset_maps: List[Dict[int, int]] = []
+    prev_active_keys: set = set()
+
+    for t_idx, notes_t in enumerate(notes):
+        active_map = {
+            note.key: _transform(int(note.velocity), t_idx)
+            for note in notes_t
+        }
+        onset_map = {k: v for k, v in active_map.items() if k not in prev_active_keys}
+        active_maps.append(active_map)
+        onset_maps.append(onset_map)
+        prev_active_keys = set(active_map)
+
+    return active_maps, onset_maps
 
 
 class PianoWithShadowHands(base.PianoTask):
