@@ -143,6 +143,7 @@ class PianoWithShadowHands(base.PianoTask):
         onset_accuracy_reward_coef: float = 0.0,
         onset_hit_bonus: float = _ONSET_ACCURACY_HIT_BONUS,
         n_steps_velocity_lookahead: int = 2,
+        style_params: Optional[StyleParams] = None,
         **kwargs,
     ) -> None:
         """Task constructor.
@@ -207,6 +208,7 @@ class PianoWithShadowHands(base.PianoTask):
         self._onset_accuracy_reward_coef = onset_accuracy_reward_coef
         self._onset_hit_bonus = onset_hit_bonus
         self._n_steps_velocity_lookahead = n_steps_velocity_lookahead
+        self._style_params = style_params
 
         if not disable_fingering_reward and not disable_colorization:
             self._colorize_fingertips()
@@ -468,6 +470,14 @@ class PianoWithShadowHands(base.PianoTask):
         return float(np.mean(rews))
 
     def _precompute_score_velocity_maps(self) -> None:
+        if self._style_params is not None:
+            active_maps, onset_maps = _apply_style_to_velocity_maps(
+                self._notes, self._style_params
+            )
+            self._score_active_velocity_maps = active_maps
+            self._score_true_onset_velocity_maps = onset_maps
+            return
+
         self._score_active_velocity_maps: List[Dict[int, int]] = []
         self._score_true_onset_velocity_maps: List[Dict[int, int]] = []
 

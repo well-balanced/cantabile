@@ -32,6 +32,10 @@ OVR_VEL=""
 OVR_ONSET=""
 OVR_ALPHA=""
 OVR_BASE_CKPT=""
+STYLE_SCALE=1.0
+STYLE_BIAS=0.0
+STYLE_CONTRAST=1.0
+STYLE_TREND=0.0
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -45,6 +49,10 @@ while [[ $# -gt 0 ]]; do
         --onset)      OVR_ONSET="$2";    shift 2 ;;
         --alpha)      OVR_ALPHA="$2";    shift 2 ;;
         --base-ckpt)  OVR_BASE_CKPT="$2"; shift 2 ;;
+        --scale)      STYLE_SCALE="$2";  shift 2 ;;
+        --bias)       STYLE_BIAS="$2";   shift 2 ;;
+        --contrast)   STYLE_CONTRAST="$2"; shift 2 ;;
+        --trend)      STYLE_TREND="$2";  shift 2 ;;
         --dry-run)    DRY_RUN=true;      shift   ;;
         *) echo "Unknown argument: $1"; exit 1 ;;
     esac
@@ -112,9 +120,17 @@ case $METHOD in
         RUN_NAME="abl_dof-${DOF_TAG}-${SONG}-s${SEED}"
         GROUP="abl_dof"
         ;;
+    style_specialist)
+        VEL=0.5
+        ONSET=0.5
+        BASE_CKPT="./checkpoints/vel_aware/${SONG}/seed${SEED}/checkpoint_5000000.flax"
+        RESIDUAL_ARGS="--residual-alpha 0.2 --residual-action-mode fingers_only --base-checkpoint ${BASE_CKPT}"
+        RUN_NAME="style_specialist-${SONG}-s${SEED}"
+        GROUP="style_specialist"
+        ;;
     *)
         echo "Unknown method: $METHOD"
-        echo "Valid methods: base | vel_aware | base_residual | vel_aware_residual | abl_dof"
+        echo "Valid methods: base | vel_aware | base_residual | vel_aware_residual | abl_dof | style_specialist"
         exit 1
         ;;
 esac
@@ -170,6 +186,10 @@ conda run -n cantabile --no-capture-output python train.py \
     --seed $SEED \
     --velocity-reward-coef $VEL \
     --onset-accuracy-reward-coef $ONSET \
+    --style-velocity-scale $STYLE_SCALE \
+    --style-velocity-bias $STYLE_BIAS \
+    --style-velocity-contrast $STYLE_CONTRAST \
+    --style-dynamic-trend $STYLE_TREND \
     --name "$RUN_NAME" \
     --tags "$GROUP" \
     $RESIDUAL_ARGS

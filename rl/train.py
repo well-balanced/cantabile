@@ -16,6 +16,7 @@ from flax import serialization
 from robopianist import suite
 import dm_env_wrappers as wrappers
 import robopianist.wrappers as robopianist_wrappers
+from robopianist.suite.tasks.piano_with_shadow_hands import StyleParams
 import re
 
 
@@ -69,6 +70,11 @@ class Args:
     base_checkpoint: Optional[Path] = None
     residual_alpha: float = 0.0
     residual_action_mode: str = "fingers_only"
+    # Velocity style transform (identity by default).
+    style_velocity_scale: float = 1.0
+    style_velocity_bias: float = 0.0
+    style_velocity_contrast: float = 1.0
+    style_dynamic_trend: float = 0.0
 
 def _action_names(action_spec) -> tuple:
     if action_spec.name:
@@ -150,6 +156,12 @@ def get_env(args: Args, record_dir: Optional[Path] = None):
             velocity_reward_coef=args.velocity_reward_coef,
             onset_accuracy_reward_coef=args.onset_accuracy_reward_coef,
             onset_hit_bonus=args.onset_hit_bonus,
+            style_params=StyleParams(
+                velocity_scale=args.style_velocity_scale,
+                velocity_bias=args.style_velocity_bias,
+                velocity_contrast=args.style_velocity_contrast,
+                dynamic_trend=args.style_dynamic_trend,
+            ),
         ),
     )
     if record_dir is not None:
