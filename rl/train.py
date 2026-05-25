@@ -190,7 +190,9 @@ def main(args: Args) -> None:
 
     # Create experiment directory.
     experiment_dir = Path(args.root_dir) / run_name
-    experiment_dir.mkdir(parents=True)
+    eval_dir = experiment_dir / "eval"
+    experiment_dir.mkdir(parents=True, exist_ok=True)
+    eval_dir.mkdir(parents=True, exist_ok=True)
 
     # Seed RNGs.
     random.seed(args.seed)
@@ -207,7 +209,7 @@ def main(args: Args) -> None:
     )
 
     env = get_env(args)
-    eval_env = get_env(args, record_dir=experiment_dir / "eval")
+    eval_env = get_env(args, record_dir=eval_dir)
 
     spec = specs.EnvironmentSpec.make(env)
 

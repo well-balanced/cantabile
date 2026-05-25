@@ -31,19 +31,21 @@ DRY_RUN=false
 OVR_VEL=""
 OVR_ONSET=""
 OVR_ALPHA=""
+OVR_BASE_CKPT=""
 
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --method)   METHOD="$2";    shift 2 ;;
-        --song)     SONG="$2";      shift 2 ;;
-        --seed)     SEED="$2";      shift 2 ;;
-        --gpu)      GPU="$2";       shift 2 ;;
-        --dof)      DOF="$2";       shift 2 ;;
-        --suffix)   SUFFIX="$2";    shift 2 ;;
-        --vel)      OVR_VEL="$2";   shift 2 ;;
-        --onset)    OVR_ONSET="$2"; shift 2 ;;
-        --alpha)    OVR_ALPHA="$2"; shift 2 ;;
-        --dry-run)  DRY_RUN=true;   shift   ;;
+        --method)     METHOD="$2";       shift 2 ;;
+        --song)       SONG="$2";         shift 2 ;;
+        --seed)       SEED="$2";         shift 2 ;;
+        --gpu)        GPU="$2";          shift 2 ;;
+        --dof)        DOF="$2";          shift 2 ;;
+        --suffix)     SUFFIX="$2";       shift 2 ;;
+        --vel)        OVR_VEL="$2";      shift 2 ;;
+        --onset)      OVR_ONSET="$2";    shift 2 ;;
+        --alpha)      OVR_ALPHA="$2";    shift 2 ;;
+        --base-ckpt)  OVR_BASE_CKPT="$2"; shift 2 ;;
+        --dry-run)    DRY_RUN=true;      shift   ;;
         *) echo "Unknown argument: $1"; exit 1 ;;
     esac
 done
@@ -123,6 +125,9 @@ esac
 if [[ -n "$OVR_ALPHA" && -n "$RESIDUAL_ARGS" ]]; then
     RESIDUAL_ARGS=$(echo "$RESIDUAL_ARGS" | sed "s/--residual-alpha [^ ]*/--residual-alpha ${OVR_ALPHA}/")
 fi
+if [[ -n "$OVR_BASE_CKPT" && -n "$RESIDUAL_ARGS" ]]; then
+    RESIDUAL_ARGS=$(echo "$RESIDUAL_ARGS" | sed "s|--base-checkpoint [^ ]*|--base-checkpoint ${OVR_BASE_CKPT}|")
+fi
 
 [[ -n "$SUFFIX" ]] && RUN_NAME="${RUN_NAME}-${SUFFIX}"
 
@@ -162,6 +167,7 @@ conda run -n cantabile --no-capture-output python train.py \
     --tqdm-bar \
     --mode "online" \
     --checkpoint-interval 500000 \
+    --seed $SEED \
     --velocity-reward-coef $VEL \
     --onset-accuracy-reward-coef $ONSET \
     --name "$RUN_NAME" \
