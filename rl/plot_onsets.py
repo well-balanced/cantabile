@@ -420,13 +420,13 @@ def make_comparison_figure(labeled1, labeled2, dt, name1, name2,
 
     # ── Layout ──────────────────────────────────────────────────────────────
     fig = plt.figure(figsize=(14, 7.5))
-    fig.patch.set_facecolor("#FAFAFA")
-    gs = fig.add_gridspec(2, 2, hspace=0.45, wspace=0.18,
+    fig.patch.set_facecolor("white")
+    gs = fig.add_gridspec(2, 2, hspace=0.28, wspace=0.18,
                           left=0.06, right=0.97, top=0.97, bottom=0.12)
     axes = [[fig.add_subplot(gs[r, c]) for c in range(2)] for r in range(2)]
     for row in axes:
         for ax in row:
-            ax.set_facecolor("#FAFAFA")
+            ax.set_facecolor("white")
 
     # ── Panel titles: "Method — Hand" ────────────────────────────────────────
     row_colors = ["#2E7D32", "#C62828"]
@@ -482,10 +482,10 @@ def make_single_figure(labeled, dt, name, split_key, output: Path):
         h = sum(1 for _, s, _, p in lb if p is not None and p <= s)
         return f"{h}/{len(lb)} ({h/len(lb)*100:.0f}% on time)"
 
-    fig, axes = plt.subplots(2, 1, figsize=(14, 6), gridspec_kw={"hspace": 0.3})
-    fig.patch.set_facecolor("#FAFAFA")
+    fig, axes = plt.subplots(2, 1, figsize=(14, 6), gridspec_kw={"hspace": 0.18})
+    fig.patch.set_facecolor("white")
     for ax in axes:
-        ax.set_facecolor("#FAFAFA")
+        ax.set_facecolor("white")
 
     _draw_panel(axes[0], rh, dt, t0, t1, title=f"{name}  ·  RH  ({hit_str(rh)} hit)")
     _draw_panel(axes[1], lh, dt, t0, t1, title=f"{name}  ·  LH  ({hit_str(lh)} hit)",

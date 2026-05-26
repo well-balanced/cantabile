@@ -104,7 +104,7 @@ def _apply_style_to_velocity_maps(
             z = float(np.clip(z + params.dynamic_trend * (2.0 * t_norm - 1.0), -2.0, 2.0))
             v = mu + sigma * z
 
-        return int(np.clip(round(v), MIN_KEY_VEL, MAX_KEY_VEL))
+        return int(np.clip(round(v), 1, 127))
 
     active_maps: List[Dict[int, int]] = []
     onset_maps: List[Dict[int, int]] = []
@@ -639,8 +639,8 @@ class PianoWithShadowHands(base.PianoTask):
             t_start = self._t_idx
             t_end = min(t_start + n, len(self._notes))
             for i, t in enumerate(range(t_start, t_end)):
-                for note in self._notes[t]:
-                    result[i, note.key] = note.velocity / 127.0
+                for key, vel in self._score_active_velocity_map(t).items():
+                    result[i, key] = vel / 127.0
             return result.ravel()
 
         velocity_goal_observable = observable.Generic(_get_velocity_goal_state)
