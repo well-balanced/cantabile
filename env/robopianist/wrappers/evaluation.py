@@ -20,7 +20,7 @@ TODO(kevin):
     as a whole?
 """
 
-from collections import deque
+from collections import defaultdict, deque
 from typing import Deque, Dict, List, NamedTuple, Optional, Sequence
 
 import dm_env
@@ -70,6 +70,8 @@ class MidiEvaluationWrapper(EnvironmentWrapper):
         # Per-onset velocity/onset-accuracy trace.
         self._episode_onset_trace: List[dict] = []
         self._all_onset_traces: Deque[List[dict]] = deque(maxlen=deque_size)
+        self._episode_gt_onset_trace: List[dict] = []
+        self._all_gt_onset_traces: Deque[List[dict]] = deque(maxlen=deque_size)
 
         # Episode-level onset accuracy counts (for mean across episodes).
         self._ep_gt_onsets: int = 0
@@ -107,6 +109,7 @@ class MidiEvaluationWrapper(EnvironmentWrapper):
             self._sustain_f1s.append(sustain_metrics.f1)
 
             self._all_onset_traces.append(list(self._episode_onset_trace))
+            self._all_gt_onset_traces.append(list(self._episode_gt_onset_trace))
             gt_onsets = max(self._ep_gt_onsets, 1)
             robot_onsets = max(
                 sum(1 for r in self._episode_onset_trace if r["robot_new_onset"]), 1
@@ -120,6 +123,7 @@ class MidiEvaluationWrapper(EnvironmentWrapper):
             self._key_presses = []
             self._sustain_presses = []
             self._episode_onset_trace = []
+            self._episode_gt_onset_trace = []
             self._ep_gt_onsets = 0
             self._ep_hits = 0
             self._ep_misses = 0
@@ -130,6 +134,7 @@ class MidiEvaluationWrapper(EnvironmentWrapper):
         self._key_presses = []
         self._sustain_presses = []
         self._episode_onset_trace = []
+        self._episode_gt_onset_trace = []
         self._ep_gt_onsets = 0
         self._ep_hits = 0
         self._ep_misses = 0
@@ -166,6 +171,13 @@ class MidiEvaluationWrapper(EnvironmentWrapper):
         self._ep_fp += len(new_onset_keys - gt_active_keys)
 
         score_sustain = bool(task._sustains[t]) if 0 <= t < len(task._sustains) else False
+
+        for key, gt_vel in gt_onset_map.items():
+            self._episode_gt_onset_trace.append({
+                "t_idx": t,
+                "key_id": int(key),
+                "gt_midi_vel": int(gt_vel),
+            })
 
         for key in new_onset_keys:
             qvel = float(piano.onset_velocities[key])
@@ -239,6 +251,33 @@ class MidiEvaluationWrapper(EnvironmentWrapper):
         """Returns per-onset rows for the last episode(s), suitable for wandb.Table."""
         return [row for ep in self._all_onset_traces for row in ep]
 
+    def get_velocity_trajectory_metrics(self, split_key: int = 39) -> List[dict]:
+        """Returns hand-wise episode-timestep velocity means over stored episodes."""
+        rows_by_t: Dict[int, dict] = {}
+        for hand_name, hand_predicate in (
+            ("right_hand", lambda key: key >= split_key),
+            ("left_hand", lambda key: key < split_key),
+        ):
+            robot = self._mean_by_timestep(
+                self._all_onset_traces,
+                "robot_midi_vel",
+                hand_predicate,
+            )
+            gt = self._mean_by_timestep(
+                self._all_gt_onset_traces,
+                "gt_midi_vel",
+                hand_predicate,
+            )
+            for t, value in robot.items():
+                rows_by_t.setdefault(t, {"episode_timestep": t})[
+                    f"{hand_name}/robot_midi_vel_5ep_mean"
+                ] = value
+            for t, value in gt.items():
+                rows_by_t.setdefault(t, {"episode_timestep": t})[
+                    f"{hand_name}/gt_midi_vel_5ep_mean"
+                ] = value
+        return [rows_by_t[t] for t in sorted(rows_by_t)]
+
     def get_musical_metrics(self) -> Dict[str, float]:
         """Returns the mean precision/recall/F1 over the last `deque_size` episodes."""
         if not self._key_press_precisions:
@@ -257,6 +296,17 @@ class MidiEvaluationWrapper(EnvironmentWrapper):
         }
 
     # Helper methods.
+
+    def _mean_by_timestep(self, episodes, value_key: str, hand_predicate) -> Dict[int, float]:
+        by_t = defaultdict(list)
+        for episode in episodes:
+            episode_by_t = defaultdict(list)
+            for row in episode:
+                if hand_predicate(int(row["key_id"])):
+                    episode_by_t[int(row["t_idx"])].append(float(row[value_key]))
+            for t, values in episode_by_t.items():
+                by_t[t].append(float(np.mean(values)))
+        return {t: float(np.mean(values)) for t, values in by_t.items()}
 
     def _compute_key_press_metrics(self) -> EpisodeMetrics:
         """Computes precision/recall/F1 for key presses over the episode."""

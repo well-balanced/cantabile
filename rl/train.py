@@ -134,6 +134,14 @@ def prefix_dict(prefix: str, d: dict) -> dict:
     return {f"{prefix}/{k}": v for k, v in d.items()}
 
 
+def prefix_velocity_trajectory(row: dict) -> dict:
+    result = {"eval_velocity/episode_timestep": row["episode_timestep"]}
+    for key, value in row.items():
+        if key != "episode_timestep":
+            result[f"eval_velocity/{key}"] = value
+    return result
+
+
 def get_env(args: Args, record_dir: Optional[Path] = None):
     env = suite.load(
         environment_name=args.environment_name,
@@ -219,6 +227,18 @@ def main(args: Args) -> None:
         mode=args.mode,
         name=run_name,
     )
+    wandb.define_metric("global_step")
+    wandb.define_metric("train/*", step_metric="global_step")
+    wandb.define_metric("eval/*", step_metric="global_step")
+    wandb.define_metric("eval_velocity/episode_timestep")
+    wandb.define_metric(
+        "eval_velocity/right_hand/*",
+        step_metric="eval_velocity/episode_timestep",
+    )
+    wandb.define_metric(
+        "eval_velocity/left_hand/*",
+        step_metric="eval_velocity/episode_timestep",
+    )
 
     env = get_env(args)
     eval_env = get_env(args, record_dir=eval_dir)
@@ -276,7 +296,7 @@ def main(args: Args) -> None:
 
         # Reset episode.
         if timestep.last():
-            wandb.log(prefix_dict("train", env.get_statistics()), step=i)
+            wandb.log({"global_step": i, **prefix_dict("train", env.get_statistics())})
             timestep = env.reset()
             replay_buffer.insert(timestep, None)
 
@@ -286,7 +306,7 @@ def main(args: Args) -> None:
                 transitions = replay_buffer.sample()
                 agent, metrics = agent.update(transitions)
                 if i % args.log_interval == 0:
-                    wandb.log(prefix_dict("train", metrics), step=i)
+                    wandb.log({"global_step": i, **prefix_dict("train", metrics)})
 
         # Eval.
         if i % args.eval_interval == 0:
@@ -298,7 +318,9 @@ def main(args: Args) -> None:
             vel_dict = prefix_dict("eval", eval_env.get_velocity_metrics())
             music_dict = prefix_dict("eval", eval_env.get_musical_metrics())
             video = wandb.Video(str(eval_env.latest_filename), fps=4, format="mp4")
-            wandb.log(log_dict | music_dict | vel_dict | {"video": video}, step=i)
+            wandb.log({"global_step": i, **log_dict, **music_dict, **vel_dict, "video": video})
+            for row in eval_env.get_velocity_trajectory_metrics():
+                wandb.log({"global_step": i, **prefix_velocity_trajectory(row)})
             eval_env.latest_filename.unlink()
 
         if i % args.checkpoint_interval == 0:
@@ -308,7 +330,7 @@ def main(args: Args) -> None:
                 f.write(serialization.to_bytes(agent.actor))
 
         if i % args.log_interval == 0:
-            wandb.log({"train/fps": int(i / (time.time() - start_time))}, step=i)
+            wandb.log({"global_step": i, "train/fps": int(i / (time.time() - start_time))})
 
 
 if __name__ == "__main__":
