@@ -70,7 +70,9 @@ case $SONG in
     forelise)   ENV="RoboPianist-debug-ForElise-v0" ;;
     prelude)    ENV="RoboPianist-debug-PreludeOp28No7-v0" ;;
     waltz)      ENV="RoboPianist-debug-WaltzOp64No1-v0" ;;
-    berceuse)   ENV="RoboPianist-debug-Berceuse-v0" ;;
+    berceuse)      ENV="RoboPianist-debug-Berceuse-v0" ;;
+    reverie)       ENV="RoboPianist-debug-Reverie-v0" ;;
+    frenchminuet)  ENV="RoboPianist-debug-FrenchSuiteNo3Minuet-v0" ;;
     *) echo "Unknown song: $SONG"; exit 1 ;;
 esac
 
