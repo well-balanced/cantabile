@@ -15,7 +15,14 @@ env/PianoFingeringDataset_v1.2/
 env/audio/
 
 rl/wandb/
+
 rl/tmp/
+*.log
 
 ref
 tmp/
+hailmary/
+rl/analysis/
+rl/logs/
+EXPERIMENT.md
+experiments.csv
