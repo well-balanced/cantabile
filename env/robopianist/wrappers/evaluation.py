@@ -20,13 +20,16 @@ TODO(kevin):
     as a whole?
 """
 
-from collections import deque
-from typing import Deque, Dict, List, NamedTuple, Sequence
+from collections import defaultdict, deque
+from typing import Deque, Dict, List, NamedTuple, Optional, Sequence
 
 import dm_env
 import numpy as np
 from dm_env_wrappers import EnvironmentWrapper
 from sklearn.metrics import precision_recall_fscore_support
+
+from robopianist.models.piano.midi_module import MAX_KEY_VEL as _MAX_KEY_VEL
+from robopianist.models.piano.midi_module import MIN_KEY_VEL as _MIN_KEY_VEL
 
 
 class EpisodeMetrics(NamedTuple):
@@ -64,13 +67,35 @@ class MidiEvaluationWrapper(EnvironmentWrapper):
         self._sustain_recalls: Deque[float] = deque(maxlen=deque_size)
         self._sustain_f1s: Deque[float] = deque(maxlen=deque_size)
 
+        # Per-onset velocity/onset-accuracy trace.
+        self._episode_onset_trace: List[dict] = []
+        self._all_onset_traces: Deque[List[dict]] = deque(maxlen=deque_size)
+        self._episode_gt_onset_trace: List[dict] = []
+        self._all_gt_onset_traces: Deque[List[dict]] = deque(maxlen=deque_size)
+
+        # Episode-level onset accuracy counts (for mean across episodes).
+        self._ep_gt_onsets: int = 0
+        self._ep_hits: int = 0
+        self._ep_misses: int = 0
+        self._ep_fp: int = 0          # robot onsets on non-score-active keys
+        self._all_onset_accuracy: Deque[Dict[str, float]] = deque(maxlen=deque_size)
+
     def step(self, action: np.ndarray) -> dm_env.TimeStep:
         timestep = self._environment.step(action)
 
-        key_activation = self._environment.task.piano.activation
+        task = self._environment.task
+        piano = task.piano
+        key_activation = piano.activation
         self._key_presses.append(key_activation.astype(np.float64))
-        sustain_activation = self._environment.task.piano.sustain_activation
+        sustain_activation = piano.sustain_activation
         self._sustain_presses.append(sustain_activation.astype(np.float64))
+
+        # Per-step onset tracking.
+        prev = getattr(task, "_prev_activation", None)
+        if prev is not None:
+            t = task._t_idx - 1
+            if 0 <= t < len(task._notes):
+                self._record_onset_step(task, piano, key_activation, prev, t)
 
         if timestep.last():
             key_press_metrics = self._compute_key_press_metrics()
@@ -83,14 +108,175 @@ class MidiEvaluationWrapper(EnvironmentWrapper):
             self._sustain_recalls.append(sustain_metrics.recall)
             self._sustain_f1s.append(sustain_metrics.f1)
 
+            self._all_onset_traces.append(list(self._episode_onset_trace))
+            self._all_gt_onset_traces.append(list(self._episode_gt_onset_trace))
+            gt_onsets = max(self._ep_gt_onsets, 1)
+            robot_onsets = max(
+                sum(1 for r in self._episode_onset_trace if r["robot_new_onset"]), 1
+            )
+            self._all_onset_accuracy.append({
+                "hit_rate": self._ep_hits / gt_onsets,
+                "miss_rate": self._ep_misses / gt_onsets,
+                "fp_rate": self._ep_fp / robot_onsets,
+            })
+
             self._key_presses = []
             self._sustain_presses = []
+            self._episode_onset_trace = []
+            self._episode_gt_onset_trace = []
+            self._ep_gt_onsets = 0
+            self._ep_hits = 0
+            self._ep_misses = 0
+            self._ep_fp = 0
         return timestep
 
     def reset(self) -> dm_env.TimeStep:
         self._key_presses = []
         self._sustain_presses = []
+        self._episode_onset_trace = []
+        self._episode_gt_onset_trace = []
+        self._ep_gt_onsets = 0
+        self._ep_hits = 0
+        self._ep_misses = 0
+        self._ep_fp = 0
         return self._environment.reset()
+
+    def _record_onset_step(
+        self,
+        task,
+        piano,
+        activation: np.ndarray,
+        prev_activation: np.ndarray,
+        t: int,
+    ) -> None:
+        new_onset_keys = set(int(k) for k in np.flatnonzero(activation & ~prev_activation))
+
+        gt_active_map: Dict[int, int] = {}
+        gt_onset_map: Dict[int, int] = {}
+        if hasattr(task, "_score_active_velocity_map"):
+            gt_active_map = task._score_active_velocity_map(t)
+            gt_onset_map = task._score_true_onset_velocity_map(t)
+        else:
+            gt_active_map = {note.key: int(note.velocity) for note in task._notes[t]}
+            prev_keys = {note.key for note in task._notes[t - 1]} if t > 0 else set()
+            gt_onset_map = {k: v for k, v in gt_active_map.items() if k not in prev_keys}
+
+        gt_onset_keys = set(gt_onset_map)
+        gt_active_keys = set(gt_active_map)
+
+        # Onset accuracy counts for this step.
+        self._ep_gt_onsets += len(gt_onset_keys)
+        self._ep_hits += len(new_onset_keys & gt_onset_keys)
+        self._ep_misses += len(gt_onset_keys - new_onset_keys)
+        self._ep_fp += len(new_onset_keys - gt_active_keys)
+
+        score_sustain = bool(task._sustains[t]) if 0 <= t < len(task._sustains) else False
+
+        for key, gt_vel in gt_onset_map.items():
+            self._episode_gt_onset_trace.append({
+                "t_idx": t,
+                "key_id": int(key),
+                "gt_midi_vel": int(gt_vel),
+            })
+
+        for key in new_onset_keys:
+            qvel = float(piano.onset_velocities[key])
+            robot_midi_vel = int(np.clip(
+                (qvel - _MIN_KEY_VEL) / (_MAX_KEY_VEL - _MIN_KEY_VEL) * 126, 0, 126
+            )) + 1
+            gt_vel: Optional[int] = gt_onset_map.get(key)
+            self._episode_onset_trace.append({
+                "t_idx": t,
+                "key_id": key,
+                "robot_qvel": round(qvel, 4),
+                "robot_midi_vel": robot_midi_vel,
+                "gt_midi_vel": gt_vel if gt_vel is not None else -1,
+                "score_active_midi_vel": gt_active_map.get(key, -1),
+                "needed_qvel": (
+                    round((float(gt_vel) - 1) / 126.0 * (_MAX_KEY_VEL - _MIN_KEY_VEL) + _MIN_KEY_VEL, 4)
+                    if gt_vel is not None else None
+                ),
+                "qvel_gap": (
+                    round(qvel - ((float(gt_vel) - 1) / 126.0 * (_MAX_KEY_VEL - _MIN_KEY_VEL) + _MIN_KEY_VEL), 4)
+                    if gt_vel is not None else None
+                ),
+                "error": (robot_midi_vel - gt_vel) if gt_vel is not None else None,
+                "score_key_active": key in gt_active_keys,
+                "gt_is_true_onset": key in gt_onset_keys,
+                "score_sustain": score_sustain,
+                "robot_new_onset": True,
+                "matched": gt_vel is not None,
+            })
+
+    def get_velocity_metrics(self) -> Dict[str, float]:
+        """Returns velocity and onset accuracy statistics over the last `deque_size` episodes."""
+        trace = [row for ep in self._all_onset_traces for row in ep]
+        matched = [row for row in trace if row["matched"]]
+
+        result: Dict[str, float] = {}
+
+        if matched:
+            robot_arr = np.array([row["robot_midi_vel"] for row in matched], dtype=np.float64)
+            gt_arr = np.array([row["gt_midi_vel"] for row in matched], dtype=np.float64)
+            errors = robot_arr - gt_arr
+            result.update({
+                "velocity_mae": float(np.mean(np.abs(errors))),
+                "velocity_rmse": float(np.sqrt(np.mean(errors ** 2))),
+                "velocity_bias": float(np.mean(errors)),
+                "velocity_std": float(np.std(robot_arr)),
+                "match_rate": len(matched) / max(len(trace), 1),
+            })
+            if len(matched) >= 2:
+                corr_matrix = np.corrcoef(robot_arr, gt_arr)
+                result["velocity_correlation"] = float(corr_matrix[0, 1])
+
+        if self._all_onset_accuracy:
+            for key in ("hit_rate", "miss_rate", "fp_rate"):
+                result[f"onset_{key}"] = float(
+                    np.mean([ep[key] for ep in self._all_onset_accuracy])
+                )
+
+            recall = float(np.mean([ep["hit_rate"] for ep in self._all_onset_accuracy]))
+            precision = 1.0 - float(np.mean([ep["fp_rate"] for ep in self._all_onset_accuracy]))
+            onset_f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
+            result["onset_f1"] = onset_f1
+
+            vel_accuracy = 1.0 - result.get("velocity_mae", 127.0) / 127.0
+            denom = onset_f1 + vel_accuracy
+            result["expressive_f1"] = 2 * onset_f1 * vel_accuracy / denom if denom > 0 else 0.0
+
+        return result
+
+    def get_episode_velocity_trace(self) -> List[dict]:
+        """Returns per-onset rows for the last episode(s), suitable for wandb.Table."""
+        return [row for ep in self._all_onset_traces for row in ep]
+
+    def get_velocity_trajectory_metrics(self, split_key: int = 39) -> List[dict]:
+        """Returns hand-wise episode-timestep velocity means over stored episodes."""
+        rows_by_t: Dict[int, dict] = {}
+        for hand_name, hand_predicate in (
+            ("right_hand", lambda key: key >= split_key),
+            ("left_hand", lambda key: key < split_key),
+        ):
+            robot = self._mean_by_timestep(
+                self._all_onset_traces,
+                "robot_midi_vel",
+                hand_predicate,
+            )
+            gt = self._mean_by_timestep(
+                self._all_gt_onset_traces,
+                "gt_midi_vel",
+                hand_predicate,
+            )
+            for t, value in robot.items():
+                rows_by_t.setdefault(t, {"episode_timestep": t})[
+                    f"{hand_name}/robot_midi_vel_5ep_mean"
+                ] = value
+            for t, value in gt.items():
+                rows_by_t.setdefault(t, {"episode_timestep": t})[
+                    f"{hand_name}/gt_midi_vel_5ep_mean"
+                ] = value
+        return [rows_by_t[t] for t in sorted(rows_by_t)]
 
     def get_musical_metrics(self) -> Dict[str, float]:
         """Returns the mean precision/recall/F1 over the last `deque_size` episodes."""
@@ -110,6 +296,17 @@ class MidiEvaluationWrapper(EnvironmentWrapper):
         }
 
     # Helper methods.
+
+    def _mean_by_timestep(self, episodes, value_key: str, hand_predicate) -> Dict[int, float]:
+        by_t = defaultdict(list)
+        for episode in episodes:
+            episode_by_t = defaultdict(list)
+            for row in episode:
+                if hand_predicate(int(row["key_id"])):
+                    episode_by_t[int(row["t_idx"])].append(float(row[value_key]))
+            for t, values in episode_by_t.items():
+                by_t[t].append(float(np.mean(values)))
+        return {t: float(np.mean(values)) for t, values in by_t.items()}
 
     def _compute_key_press_metrics(self) -> EpisodeMetrics:
         """Computes precision/recall/F1 for key presses over the episode."""

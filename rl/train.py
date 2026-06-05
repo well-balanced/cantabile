@@ -11,10 +11,13 @@ from tqdm import tqdm
 import sac
 import specs
 import replay
+from flax import serialization
 
 from robopianist import suite
 import dm_env_wrappers as wrappers
 import robopianist.wrappers as robopianist_wrappers
+from robopianist.suite.tasks.piano_with_shadow_hands import StyleParams
+import re
 
 
 @dataclass(frozen=True)
@@ -30,8 +33,8 @@ class Args:
     discount: float = 0.99
     tqdm_bar: bool = False
     replay_capacity: int = 1_000_000
-    project: str = "robopianist"
-    entity: str = ""
+    project: str = "cantabile"
+    entity: str = "cantabile"
     name: str = ""
     tags: str = ""
     notes: str = ""
@@ -58,10 +61,85 @@ class Args:
     camera_id: Optional[str | int] = "piano/back"
     action_reward_observation: bool = False
     agent_config: sac.SACConfig = sac.SACConfig()
+    restore_checkpoint: Optional[Path] = None
+    checkpoint_interval: int = 500_000
+    velocity_reward_coef: float = 0.0
+    onset_accuracy_reward_coef: float = 0.0
+    onset_hit_bonus: float = 1.0
+    # Residual RL options.
+    base_checkpoint: Optional[Path] = None
+    residual_alpha: float = 0.0
+    residual_action_mode: str = "fingers_only"
+    # Velocity style transform (identity by default).
+    style_velocity_scale: float = 1.0
+    style_velocity_bias: float = 0.0
+    style_velocity_contrast: float = 1.0
+    style_dynamic_trend: float = 0.0
+
+def _action_names(action_spec) -> tuple:
+    if action_spec.name:
+        names = tuple(action_spec.name.split("\t"))
+        if len(names) == action_spec.shape[-1]:
+            return names
+    return tuple(str(i) for i in range(action_spec.shape[-1]))
+
+
+def _resolve_residual_action_indices(action_names: tuple, mode: str) -> tuple:
+    if mode == "all":
+        indices = tuple(range(len(action_names)))
+    elif mode == "fingers_only":
+        blocked = ("wrj", "forearm", "sustain")
+        indices = tuple(
+            i for i, name in enumerate(action_names)
+            if not any(tok in name.lower() for tok in blocked)
+        )
+    elif mode == "fingers_wrist":
+        blocked = ("forearm", "sustain")
+        indices = tuple(
+            i for i, name in enumerate(action_names)
+            if not any(tok in name.lower() for tok in blocked)
+        )
+    else:
+        raise ValueError(f"Unsupported residual_action_mode: {mode}")
+    if not indices:
+        raise ValueError("Residual action selection removed every action.")
+    return indices
+
+
+def _make_base_actor(spec: specs.EnvironmentSpec, args: Args) -> sac.TrainState:
+    template = sac.SAC.initialize(spec=spec, config=args.agent_config, seed=args.seed, discount=args.discount)
+    if args.base_checkpoint is None:
+        return template.actor
+    sidecar = Path(str(args.base_checkpoint).replace(".flax", "_actor.flax"))
+    if sidecar.exists():
+        with sidecar.open("rb") as f:
+            actor = serialization.from_bytes(template.actor, f.read())
+        print(f"Loaded base actor (sidecar) from {sidecar}")
+        return actor
+    base = sac.SAC.load(args.base_checkpoint, template)
+    print(f"Loaded base actor from {args.base_checkpoint}")
+    return base.actor
+
+
+def _restore_step(path: Optional[Path]) -> int:
+    if path is None:
+        return 0
+    match = re.search(r"checkpoint_(\d+)\.flax$", str(path))
+    if match is None:
+        return 0
+    return int(match.group(1))
 
 
 def prefix_dict(prefix: str, d: dict) -> dict:
     return {f"{prefix}/{k}": v for k, v in d.items()}
+
+
+def prefix_velocity_trajectory(row: dict) -> dict:
+    result = {"eval_velocity/episode_timestep": row["episode_timestep"]}
+    for key, value in row.items():
+        if key != "episode_timestep":
+            result[f"eval_velocity/{key}"] = value
+    return result
 
 
 def get_env(args: Args, record_dir: Optional[Path] = None):
@@ -83,6 +161,15 @@ def get_env(args: Args, record_dir: Optional[Path] = None):
             disable_hand_collisions=args.disable_hand_collisions,
             primitive_fingertip_collisions=args.primitive_fingertip_collisions,
             change_color_on_activation=True,
+            velocity_reward_coef=args.velocity_reward_coef,
+            onset_accuracy_reward_coef=args.onset_accuracy_reward_coef,
+            onset_hit_bonus=args.onset_hit_bonus,
+            style_params=StyleParams(
+                velocity_scale=args.style_velocity_scale,
+                velocity_bias=args.style_velocity_bias,
+                velocity_contrast=args.style_velocity_contrast,
+                dynamic_trend=args.style_dynamic_trend,
+            ),
         ),
     )
     if record_dir is not None:
@@ -123,7 +210,9 @@ def main(args: Args) -> None:
 
     # Create experiment directory.
     experiment_dir = Path(args.root_dir) / run_name
-    experiment_dir.mkdir(parents=True)
+    eval_dir = experiment_dir / "eval"
+    experiment_dir.mkdir(parents=True, exist_ok=True)
+    eval_dir.mkdir(parents=True, exist_ok=True)
 
     # Seed RNGs.
     random.seed(args.seed)
@@ -138,18 +227,49 @@ def main(args: Args) -> None:
         mode=args.mode,
         name=run_name,
     )
+    wandb.define_metric("global_step")
+    wandb.define_metric("train/*", step_metric="global_step")
+    wandb.define_metric("eval/*", step_metric="global_step")
+    wandb.define_metric("eval_velocity/episode_timestep")
+    wandb.define_metric(
+        "eval_velocity/right_hand/*",
+        step_metric="eval_velocity/episode_timestep",
+    )
+    wandb.define_metric(
+        "eval_velocity/left_hand/*",
+        step_metric="eval_velocity/episode_timestep",
+    )
 
     env = get_env(args)
-    eval_env = get_env(args, record_dir=experiment_dir / "eval")
+    eval_env = get_env(args, record_dir=eval_dir)
 
     spec = specs.EnvironmentSpec.make(env)
 
-    agent = sac.SAC.initialize(
-        spec=spec,
-        config=args.agent_config,
-        seed=args.seed,
-        discount=args.discount,
-    )
+    checkpoint_dir = Path(args.root_dir) / "checkpoints" / run_name
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+
+    if args.residual_alpha > 0:
+        residual_action_indices = _resolve_residual_action_indices(
+            _action_names(spec.action), args.residual_action_mode
+        )
+        print(f"Residual action mode: {args.residual_action_mode} ({len(residual_action_indices)} dims)")
+        base_actor = _make_base_actor(spec, args)
+        agent = sac.ResidualSAC.initialize(
+            spec=spec,
+            config=args.agent_config,
+            base_actor=base_actor,
+            seed=args.seed,
+            discount=args.discount,
+            residual_alpha=args.residual_alpha,
+            residual_action_indices=residual_action_indices,
+        )
+    else:
+        agent = sac.SAC.initialize(
+            spec=spec,
+            config=args.agent_config,
+            seed=args.seed,
+            discount=args.discount,
+        )
 
     replay_buffer = replay.Buffer(
         state_dim=spec.observation_dim,
@@ -160,9 +280,10 @@ def main(args: Args) -> None:
 
     timestep = env.reset()
     replay_buffer.insert(timestep, None)
-
+    
+    start_step = _restore_step(args.restore_checkpoint)
     start_time = time.time()
-    for i in tqdm(range(1, args.max_steps + 1), disable=not args.tqdm_bar):
+    for i in tqdm(range(start_step + 1, args.max_steps + 1), disable=not args.tqdm_bar):
         # Act.
         if i < args.warmstart_steps:
             action = spec.sample_action(random_state=env.random_state)
@@ -175,7 +296,7 @@ def main(args: Args) -> None:
 
         # Reset episode.
         if timestep.last():
-            wandb.log(prefix_dict("train", env.get_statistics()), step=i)
+            wandb.log({"global_step": i, **prefix_dict("train", env.get_statistics())})
             timestep = env.reset()
             replay_buffer.insert(timestep, None)
 
@@ -185,7 +306,7 @@ def main(args: Args) -> None:
                 transitions = replay_buffer.sample()
                 agent, metrics = agent.update(transitions)
                 if i % args.log_interval == 0:
-                    wandb.log(prefix_dict("train", metrics), step=i)
+                    wandb.log({"global_step": i, **prefix_dict("train", metrics)})
 
         # Eval.
         if i % args.eval_interval == 0:
@@ -194,14 +315,22 @@ def main(args: Args) -> None:
                 while not timestep.last():
                     timestep = eval_env.step(agent.eval_actions(timestep.observation))
             log_dict = prefix_dict("eval", eval_env.get_statistics())
+            vel_dict = prefix_dict("eval", eval_env.get_velocity_metrics())
             music_dict = prefix_dict("eval", eval_env.get_musical_metrics())
-            wandb.log(log_dict | music_dict, step=i)
             video = wandb.Video(str(eval_env.latest_filename), fps=4, format="mp4")
-            wandb.log({"video": video, "global_step": i})
+            wandb.log({"global_step": i, **log_dict, **music_dict, **vel_dict, "video": video})
+            for row in eval_env.get_velocity_trajectory_metrics():
+                wandb.log({"global_step": i, **prefix_velocity_trajectory(row)})
             eval_env.latest_filename.unlink()
 
+        if i % args.checkpoint_interval == 0:
+            ckpt_path = checkpoint_dir / f"checkpoint_{i}.flax"
+            agent.save(ckpt_path)
+            with open(checkpoint_dir / f"checkpoint_{i}_actor.flax", "wb") as f:
+                f.write(serialization.to_bytes(agent.actor))
+
         if i % args.log_interval == 0:
-            wandb.log({"train/fps": int(i / (time.time() - start_time))}, step=i)
+            wandb.log({"global_step": i, "train/fps": int(i / (time.time() - start_time))})
 
 
 if __name__ == "__main__":

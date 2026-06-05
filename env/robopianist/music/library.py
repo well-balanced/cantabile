@@ -541,13 +541,80 @@ def nocturne_rousseau() -> midi_file.MidiFile:
     return midi
 
 
+def clair_de_lune() -> midi_file.MidiFile:
+    return midi_file.MidiFile.from_file(_DATA_PATH / "pig_single_finger" / "clair_de_lune-1.proto")
+
+
+def gymnopedie_no_1() -> midi_file.MidiFile:
+    return midi_file.MidiFile.from_file(_DATA_PATH / "pig_single_finger" / "gymnopedie_no_1-1.proto")
+
+
+def for_elise() -> midi_file.MidiFile:
+    return midi_file.MidiFile.from_file(_DATA_PATH / "pig_single_finger" / "for_elise-1.proto")
+
+
+def prelude_op_28_no_7() -> midi_file.MidiFile:
+    return midi_file.MidiFile.from_file(_DATA_PATH / "pig_single_finger" / "prelude_op_28_no_7-1.proto")
+
+
+def waltz_op_64_no_1() -> midi_file.MidiFile:
+    return midi_file.MidiFile.from_file(_DATA_PATH / "pig_single_finger" / "waltz_op_64_no_1-1.proto")
+
+
+def berceuse() -> midi_file.MidiFile:
+    return midi_file.MidiFile.from_file(_DATA_PATH / "pig_single_finger" / "berceuse-1.proto")
+
+
+def french_suite_no_5_sarabande() -> midi_file.MidiFile:
+    return midi_file.MidiFile.from_file(_DATA_PATH / "pig_single_finger" / "french_suite_no_5_sarabande-1.proto")
+
+
+def reverie() -> midi_file.MidiFile:
+    return midi_file.MidiFile.from_file(_DATA_PATH / "pig_single_finger" / "reverie-1.proto")
+
+
+def french_suite_no_3_minuet() -> midi_file.MidiFile:
+    return midi_file.MidiFile.from_file(_DATA_PATH / "pig_single_finger" / "french_suite_no_3_minuet-1.proto")
+
+
+def piano_sonata_k_280_2nd_mov() -> midi_file.MidiFile:
+    return midi_file.MidiFile.from_file(_DATA_PATH / "pig_single_finger" / "piano_sonata_k_280_in_f_major_2nd_mov-1.proto")
+
+
+def minuet_in_g_major() -> midi_file.MidiFile:
+    return midi_file.MidiFile.from_file(_DATA_PATH / "pig_single_finger" / "minuet_in_g_major_woo_10_2-1.proto")
+
+
+def lyric_pieces_op_12_no_1() -> midi_file.MidiFile:
+    return midi_file.MidiFile.from_file(_DATA_PATH / "pig_single_finger" / "lyric_pieces_op_12_no_1-1.proto")
+
+
 MIDI_NAME_TO_CALLABLE: Dict[str, Callable[[], midi_file.MidiFile]] = {
+    # poly=1
     "TwinkleTwinkleLittleStar": twinkle_twinkle_little_star_one_hand,
     "CMajorScaleOneHand": c_major_scale_one_hand,
-    "CMajorScaleTwoHands": c_major_scale_two_hands,
     "DMajorScaleOneHand": d_major_scale_one_hand,
+    # poly=2
+    "CMajorScaleTwoHands": c_major_scale_two_hands,
     "DMajorScaleTwoHands": d_major_scale_two_hands,
-    "CMajorChordProgressionTwoHands": c_major_chord_progression_two_hands,
+    # poly=3
+    "FrenchSuiteNo5Sarabande": french_suite_no_5_sarabande,
+    "Reverie": reverie,
+    "FrenchSuiteNo3Minuet": french_suite_no_3_minuet,
+    "PianoSonataK2802ndMov": piano_sonata_k_280_2nd_mov,
+    # poly=4
     "TwinkleTwinkleRousseau": twinkle_twinkle_rousseau,
+    "CMajorChordProgressionTwoHands": c_major_chord_progression_two_hands,
+    "Berceuse": berceuse,
+    "MinuetInGMajor": minuet_in_g_major,
+    "ForElise": for_elise,
+    "LyricPiecesOp12No1": lyric_pieces_op_12_no_1,
+    # poly=5
+    "ClairDeLune": clair_de_lune,
     "NocturneRousseau": nocturne_rousseau,
+    "WaltzOp64No1": waltz_op_64_no_1,
+    # poly=6
+    "GymnopedieNo1": gymnopedie_no_1,
+    # poly=9
+    "PreludeOp28No7": prelude_op_28_no_7,
 }

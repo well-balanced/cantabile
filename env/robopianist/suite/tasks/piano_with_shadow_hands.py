@@ -14,7 +14,8 @@
 
 """A task where two shadow hands must play a given MIDI file on a piano."""
 
-from typing import List, Optional, Sequence, Tuple
+from dataclasses import dataclass
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 from scipy.optimize import linear_sum_assignment
@@ -28,6 +29,7 @@ from mujoco_utils import collision_utils, spec_utils
 
 import robopianist.models.hands.shadow_hand_constants as hand_consts
 from robopianist.models.arenas import stage
+from robopianist.models.piano.midi_module import MAX_KEY_VEL, MIN_KEY_VEL
 from robopianist.music import midi_file
 from robopianist.suite import composite_reward
 from robopianist.suite.tasks import base
@@ -44,6 +46,81 @@ _FINGERTIP_ALPHA = 1.0
 
 # Bounds for the uniform distribution from which initial hand offset is sampled.
 _POSITION_OFFSET = 0.05
+
+# Onset accuracy reward constants.
+_ONSET_ACCURACY_HIT_BONUS = 1.0
+
+
+@dataclass
+class StyleParams:
+    """Velocity style descriptor.
+
+    velocity_scale:    α — global loudness multiplier (identity: 1.0)
+    velocity_bias:     β — global loudness offset (identity: 0.0)
+    velocity_contrast: γ — dynamic range expansion/compression (identity: 1.0)
+    dynamic_trend:     k — crescendo (+) / decrescendo (−) arc (identity: 0.0)
+    """
+    velocity_scale: float = 1.0
+    velocity_bias: float = 0.0
+    velocity_contrast: float = 1.0
+    dynamic_trend: float = 0.0
+
+    @classmethod
+    def identity(cls) -> "StyleParams":
+        return cls()
+
+
+def _apply_style_to_velocity_maps(
+    notes: List,
+    params: StyleParams,
+) -> Tuple[List[Dict[int, int]], List[Dict[int, int]]]:
+    """Apply style transforms to per-timestep velocity maps.
+
+    Returns (active_maps, onset_maps) with style-transformed MIDI velocities.
+    """
+    all_vels = [int(note.velocity) for notes_t in notes for note in notes_t]
+    if not all_vels:
+        mu, sigma = 64.0, 1.0
+    else:
+        arr = np.array(all_vels, dtype=float)
+        mu, sigma = float(arr.mean()), float(arr.std()) + 1e-6
+
+    n_steps = len(notes)
+
+    def _transform(velocity: int, t_idx: int) -> int:
+        v = float(velocity)
+
+        # 1. velocity_scale + bias: v' = α·v + β
+        v = params.velocity_scale * v + params.velocity_bias
+
+        # 2. velocity_contrast: v' = μ + γ(v − μ)
+        if abs(params.velocity_contrast - 1.0) > 1e-9:
+            v = mu + params.velocity_contrast * (v - mu)
+
+        # 3. dynamic_trend: z = (v−μ)/σ, t∈[0,1], z' = clip(z + k(2t−1), −2, 2)
+        if abs(params.dynamic_trend) > 1e-9:
+            t_norm = t_idx / max(n_steps - 1, 1)
+            z = (v - mu) / sigma
+            z = float(np.clip(z + params.dynamic_trend * (2.0 * t_norm - 1.0), -2.0, 2.0))
+            v = mu + sigma * z
+
+        return int(np.clip(round(v), 1, 127))
+
+    active_maps: List[Dict[int, int]] = []
+    onset_maps: List[Dict[int, int]] = []
+    prev_active_keys: set = set()
+
+    for t_idx, notes_t in enumerate(notes):
+        active_map = {
+            note.key: _transform(int(note.velocity), t_idx)
+            for note in notes_t
+        }
+        onset_map = {k: v for k, v in active_map.items() if k not in prev_active_keys}
+        active_maps.append(active_map)
+        onset_maps.append(onset_map)
+        prev_active_keys = set(active_map)
+
+    return active_maps, onset_maps
 
 
 class PianoWithShadowHands(base.PianoTask):
@@ -62,6 +139,11 @@ class PianoWithShadowHands(base.PianoTask):
         augmentations: Optional[Sequence[base_variation.Variation]] = None,
         energy_penalty_coef: float = _ENERGY_PENALTY_COEF,
         randomize_hand_positions: bool = False,
+        velocity_reward_coef: float = 0.0,
+        onset_accuracy_reward_coef: float = 0.0,
+        onset_hit_bonus: float = _ONSET_ACCURACY_HIT_BONUS,
+        n_steps_velocity_lookahead: int = 2,
+        style_params: Optional[StyleParams] = None,
         **kwargs,
     ) -> None:
         """Task constructor.
@@ -94,6 +176,11 @@ class PianoWithShadowHands(base.PianoTask):
             energy_penalty_coef: Coefficient for the energy penalty.
             randomize_hand_positions: If True, randomizes the initial position of the
                 hands at the beginning of each episode.
+            velocity_reward_coef: Coefficient for the velocity reward.
+            onset_accuracy_reward_coef: Coefficient for the onset accuracy reward.
+            onset_hit_bonus: Weight for the hit_rate term in onset accuracy reward.
+            n_steps_velocity_lookahead: Number of timesteps to look ahead in the
+                velocity goal observable.
         """
         super().__init__(arena=stage.Stage(), **kwargs)
 
@@ -117,6 +204,11 @@ class PianoWithShadowHands(base.PianoTask):
         self._augmentations = augmentations
         self._energy_penalty_coef = energy_penalty_coef
         self._randomize_hand_positions = randomize_hand_positions
+        self._velocity_reward_coef = velocity_reward_coef
+        self._onset_accuracy_reward_coef = onset_accuracy_reward_coef
+        self._onset_hit_bonus = onset_hit_bonus
+        self._n_steps_velocity_lookahead = n_steps_velocity_lookahead
+        self._style_params = style_params
 
         if not disable_fingering_reward and not disable_colorization:
             self._colorize_fingertips()
@@ -143,10 +235,17 @@ class PianoWithShadowHands(base.PianoTask):
         if not self._disable_forearm_reward:
             self._reward_fn.add("forearm_reward", self._compute_forearm_reward)
 
+        if self._velocity_reward_coef > 0.0:
+            self._reward_fn.add("velocity_reward", self._compute_velocity_reward)
+
+        if self._onset_accuracy_reward_coef > 0.0:
+            self._reward_fn.add("onset_accuracy_reward", self._compute_onset_accuracy_reward)
+
     def _reset_quantities_at_episode_init(self) -> None:
         self._t_idx: int = 0
         self._should_terminate: bool = False
         self._discount: float = 1.0
+        self._prev_activation = np.zeros(self.piano.n_keys, dtype=bool)
 
     def _maybe_change_midi(self, random_state: np.random.RandomState) -> None:
         if self._augmentations is not None:
@@ -163,6 +262,7 @@ class PianoWithShadowHands(base.PianoTask):
         note_traj.add_initial_buffer_time(self._initial_buffer_time)
         self._notes = note_traj.notes
         self._sustains = note_traj.sustains
+        self._precompute_score_velocity_maps()
 
     # Composer methods.
 
@@ -180,6 +280,7 @@ class PianoWithShadowHands(base.PianoTask):
         random_state: np.random.RandomState,
     ) -> None:
         """Applies the control to the hands and the sustain pedal to the piano."""
+        self._prev_activation = self.piano.activation.copy()
         action_right, action_left = np.split(action[:-1], 2)
         self.right_hand.apply_action(physics, action_right, random_state)
         self.left_hand.apply_action(physics, action_left, random_state)
@@ -335,7 +436,7 @@ class PianoWithShadowHands(base.PianoTask):
         # calcuate fingertip positions
         fingertip_pos = [physics.bind(finger).xpos.copy() for finger in self.left_hand.fingertip_sites]
         fingertip_pos += [physics.bind(finger).xpos.copy() for finger in self.right_hand.fingertip_sites]
-        
+
         # calcuate the positions of piano keys to press.
         keys_to_press = np.flatnonzero(self._goal_current[:-1]) # keys to press
         # if no key is pressed
@@ -356,7 +457,7 @@ class PianoWithShadowHands(base.PianoTask):
         for i, finger in enumerate(fingertip_pos):
             for j, key in enumerate(key_pos):
                 dist[i, j] = np.linalg.norm(key - finger)
-        
+
         # calculate the shortest distance
         row_ind, col_ind = linear_sum_assignment(dist)
         dist = dist[row_ind, col_ind]
@@ -366,7 +467,94 @@ class PianoWithShadowHands(base.PianoTask):
             margin=(_FINGER_CLOSE_ENOUGH_TO_KEY * 10),
             sigmoid="gaussian",
         )
-        return float(np.mean(rews))        
+        return float(np.mean(rews))
+
+    def _precompute_score_velocity_maps(self) -> None:
+        if self._style_params is not None:
+            active_maps, onset_maps = _apply_style_to_velocity_maps(
+                self._notes, self._style_params
+            )
+            self._score_active_velocity_maps = active_maps
+            self._score_true_onset_velocity_maps = onset_maps
+            return
+
+        self._score_active_velocity_maps: List[Dict[int, int]] = []
+        self._score_true_onset_velocity_maps: List[Dict[int, int]] = []
+
+        prev_active_keys: set = set()
+        for notes in self._notes:
+            active_velocity_map = {note.key: int(note.velocity) for note in notes}
+            true_onset_velocity_map = {
+                key: vel
+                for key, vel in active_velocity_map.items()
+                if key not in prev_active_keys
+            }
+            self._score_active_velocity_maps.append(active_velocity_map)
+            self._score_true_onset_velocity_maps.append(true_onset_velocity_map)
+            prev_active_keys = set(active_velocity_map)
+
+    def _score_active_velocity_map(self, t_idx: int) -> Dict[int, int]:
+        if 0 <= t_idx < len(self._score_active_velocity_maps):
+            return self._score_active_velocity_maps[t_idx]
+        return {}
+
+    def _score_true_onset_velocity_map(self, t_idx: int) -> Dict[int, int]:
+        if 0 <= t_idx < len(self._score_true_onset_velocity_maps):
+            return self._score_true_onset_velocity_maps[t_idx]
+        return {}
+
+    def _compute_velocity_reward(self, physics: mjcf.Physics) -> float:
+        del physics  # Unused.
+        new_onsets = self.piano.activation & ~self._prev_activation
+        if not new_onsets.any():
+            return 0.0
+
+        t = self._t_idx - 1
+        gt_true_onset_velocity_map = self._score_true_onset_velocity_map(t)
+        rewards = []
+        for key in np.flatnonzero(new_onsets):
+            gt_vel = gt_true_onset_velocity_map.get(int(key))
+            if gt_vel is None:
+                rewards.append(0.0)
+                continue
+            robot_midi_vel = (
+                int(np.clip(
+                    (self.piano.onset_velocities[key] - MIN_KEY_VEL) / (MAX_KEY_VEL - MIN_KEY_VEL) * 126,
+                    0, 126,
+                ))
+                + 1
+            )
+            lo = max(1, gt_vel - 1)
+            hi = min(127, gt_vel + 1)
+            accuracy = tolerance(
+                robot_midi_vel,
+                bounds=(lo, hi),
+                margin=20,
+                sigmoid="gaussian",
+                value_at_margin=0.05,
+            )
+            rewards.append(2.0 * float(accuracy) - 1.0)
+
+        return self._velocity_reward_coef * float(np.mean(rewards))
+
+    def _get_onset_accuracy_rates(
+        self, new_onsets: np.ndarray, t_idx: int
+    ) -> float:
+        robot_onset_keys = {int(key) for key in np.flatnonzero(new_onsets)}
+        gt_true_onset_keys = set(self._score_true_onset_velocity_map(t_idx))
+
+        hit_count = len(robot_onset_keys & gt_true_onset_keys)
+        gt_onset_denom = max(len(gt_true_onset_keys), 1)
+        return hit_count / gt_onset_denom
+
+    def _compute_onset_accuracy_reward(self, physics: mjcf.Physics) -> float:
+        del physics  # Unused.
+        new_onsets = self.piano.activation & ~self._prev_activation
+        t = self._t_idx - 1
+
+        hit_rate = self._get_onset_accuracy_rates(new_onsets, t)
+        raw_reward = self._onset_hit_bonus * hit_rate
+        return self._onset_accuracy_reward_coef * raw_reward
 
     def _update_goal_state(self) -> None:
         # Observable callables get called after `after_step` but before
@@ -413,16 +601,9 @@ class PianoWithShadowHands(base.PianoTask):
 
     def _add_observables(self) -> None:
         # Enable hand observables.
-        enabled_observables = [
-            "joints_pos",
-            # NOTE(kevin): This observable was previously enabled but it is redundant
-            # since it is encoded in the joint positions, specifically via the forearm
-            # slider joints (which are in units of meters).
-            # "position",
-        ]
         for hand in [self.right_hand, self.left_hand]:
-            for obs in enabled_observables:
-                getattr(hand.observables, obs).enabled = True
+            hand.observables.joints_pos.enabled = True
+            hand.observables.joints_vel.enabled = True
 
         # This returns the current state of the piano keys.
         self.piano.observables.state.enabled = True
@@ -447,6 +628,24 @@ class PianoWithShadowHands(base.PianoTask):
         fingering_observable = observable.Generic(_get_fingering_state)
         fingering_observable.enabled = not self._disable_fingering_reward
         self._task_observables["fingering"] = fingering_observable
+
+        # This returns the GT velocity goal for the current timestep and n steps ahead.
+        def _get_velocity_goal_state(physics) -> np.ndarray:
+            del physics  # Unused.
+            n = self._n_steps_velocity_lookahead + 1
+            result = np.zeros((n, self.piano.n_keys), dtype=np.float64)
+            if self._t_idx == len(self._notes):
+                return result.ravel()
+            t_start = self._t_idx
+            t_end = min(t_start + n, len(self._notes))
+            for i, t in enumerate(range(t_start, t_end)):
+                for key, vel in self._score_active_velocity_map(t).items():
+                    result[i, key] = vel / 127.0
+            return result.ravel()
+
+        velocity_goal_observable = observable.Generic(_get_velocity_goal_state)
+        velocity_goal_observable.enabled = True
+        self._task_observables["velocity_goal"] = velocity_goal_observable
 
     def _colorize_fingertips(self) -> None:
         """Colorize the fingertips of the hands."""
