@@ -168,7 +168,11 @@ class MidiEvaluationWrapper(EnvironmentWrapper):
         self._ep_gt_onsets += len(gt_onset_keys)
         self._ep_hits += len(new_onset_keys & gt_onset_keys)
         self._ep_misses += len(gt_onset_keys - new_onset_keys)
-        self._ep_fp += len(new_onset_keys - gt_active_keys)
+        # FP = every robot onset that isn't a matched true onset (not just
+        # ones on score-inactive keys). A robot re-strike on a key that's
+        # merely being sustained (active but not a true onset right now) is
+        # still a spurious onset and must count against precision.
+        self._ep_fp += len(new_onset_keys - gt_onset_keys)
 
         score_sustain = bool(task._sustains[t]) if 0 <= t < len(task._sustains) else False
 
@@ -239,6 +243,8 @@ class MidiEvaluationWrapper(EnvironmentWrapper):
             recall = float(np.mean([ep["hit_rate"] for ep in self._all_onset_accuracy]))
             precision = 1.0 - float(np.mean([ep["fp_rate"] for ep in self._all_onset_accuracy]))
             onset_f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
+            result["onset_recall"] = recall
+            result["onset_precision"] = precision
             result["onset_f1"] = onset_f1
 
             vel_accuracy = 1.0 - result.get("velocity_mae", 127.0) / 127.0
