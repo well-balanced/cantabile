@@ -17,6 +17,7 @@ env/audio/
 rl/wandb/
 
 rl/tmp/
+rl/checkpoints/
 *.log
 
 ref
@@ -26,3 +27,6 @@ rl/analysis/
 rl/logs/
 EXPERIMENT.md
 experiments.csv
+.venv/
+data/
+rp1m*.zip
