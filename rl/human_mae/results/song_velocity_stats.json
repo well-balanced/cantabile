@@ -1,0 +1,29 @@
+{
+  "TwinkleTwinkleRousseau": {
+    "source": "rousseau (real YouTube performance, permission granted, see data/README.md)",
+    "n_notes": 34,
+    "n_unique_velocities": 21,
+    "mean": 40.32,
+    "std": 8.18,
+    "min": 17,
+    "max": 61
+  },
+  "NocturneRousseau": {
+    "source": "rousseau (real YouTube performance, permission granted, see data/README.md)",
+    "n_notes": 117,
+    "n_unique_velocities": 32,
+    "mean": 39.61,
+    "std": 14.12,
+    "min": 18,
+    "max": 78
+  },
+  "ClairDeLune": {
+    "source": "PIG dataset (real performance-derived fingering corpus)",
+    "n_notes": 79,
+    "n_unique_velocities": 7,
+    "mean": 44.16,
+    "std": 4.31,
+    "min": 32,
+    "max": 51
+  }
+}

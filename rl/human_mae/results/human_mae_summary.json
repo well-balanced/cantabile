@@ -1,0 +1,21 @@
+{
+  "n_pairs": 299,
+  "n_titles": 127,
+  "n_skipped": 51,
+  "n_matched_notes_pooled": 1046902,
+  "per_pair_mae_mean": 10.78,
+  "per_pair_mae_median": 10.642,
+  "per_pair_mae_std": 1.722,
+  "per_pair_mae_p10": 8.726,
+  "per_pair_mae_p90": 12.954,
+  "pooled_mae": 10.98,
+  "args": {
+    "cache_dir": "rl/tmp/maestro",
+    "max_pairs": 350,
+    "cap_per_title": 6,
+    "min_matched": 10,
+    "min_match_frac": 0.3,
+    "seed": 0,
+    "out_dir": "rl/human_mae/results"
+  }
+}

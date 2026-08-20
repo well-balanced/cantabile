@@ -1,0 +1,43 @@
+{
+  "rows": [
+    {
+      "condition": "Baseline",
+      "n": null,
+      "matched_only_mae": 26.2,
+      "rw_mae_mean": 31.125,
+      "rw_mae_ci95": null,
+      "approx": true,
+      "source": "paper Table (approx: recall proxied by onset_f1, see docstring)"
+    },
+    {
+      "condition": "Vel-Aware",
+      "n": null,
+      "matched_only_mae": 12.9,
+      "rw_mae_mean": 19.258,
+      "rw_mae_ci95": null,
+      "approx": true,
+      "source": "paper Table (approx: recall proxied by onset_f1, see docstring)"
+    },
+    {
+      "condition": "Base+Res",
+      "n": null,
+      "matched_only_mae": 10.6,
+      "rw_mae_mean": 19.655,
+      "rw_mae_ci95": null,
+      "approx": true,
+      "source": "paper Table (approx: recall proxied by onset_f1, see docstring)"
+    },
+    {
+      "condition": "Vel-Aware+Res",
+      "n": null,
+      "matched_only_mae": 7.0,
+      "rw_mae_mean": 15.035,
+      "rw_mae_ci95": null,
+      "approx": true,
+      "source": "paper Table (approx: recall proxied by onset_f1, see docstring)"
+    }
+  ],
+  "human_anchor_mae": 10.78,
+  "formula": "MAE_rw = R_onset * MAE_matched + (1 - R_onset) * v_bar",
+  "used_wandb_data": false
+}
