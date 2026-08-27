@@ -247,6 +247,22 @@ class MidiEvaluationWrapper(EnvironmentWrapper):
             result["onset_precision"] = precision
             result["onset_f1"] = onset_f1
 
+            # Recall-weighted velocity MAE (rl/human_mae/recall_weighted_mae.py's
+            # formula, now computed live instead of only post-hoc): matched-only
+            # velocity_mae is optimistic because misses are systematically the hard
+            # notes (fast passages, dense chords), so it's an average over a
+            # selection-biased subset. This reweights to the full GT-onset
+            # denominator, charging v_bar (mean GT velocity over every true onset,
+            # hit or missed) as the penalty for each missed onset -- same convention
+            # the paper's Dynamics Score uses for "completely missed" notes.
+            gt_trace = [row for ep in self._all_gt_onset_traces for row in ep]
+            if gt_trace:
+                v_bar = float(np.mean([row["gt_midi_vel"] for row in gt_trace]))
+                matched_mae = result.get("velocity_mae", v_bar)
+                result["velocity_mae_recall_weighted"] = (
+                    recall * matched_mae + (1.0 - recall) * v_bar
+                )
+
             vel_accuracy = 1.0 - result.get("velocity_mae", 127.0) / 127.0
             denom = onset_f1 + vel_accuracy
             result["expressive_f1"] = 2 * onset_f1 * vel_accuracy / denom if denom > 0 else 0.0
