@@ -62,7 +62,7 @@ class Args:
     action_reward_observation: bool = False
     agent_config: sac.SACConfig = sac.SACConfig()
     restore_checkpoint: Optional[Path] = None
-    checkpoint_interval: int = 500_000
+    checkpoint_interval: int = 2_000_000
     velocity_reward_coef: float = 0.0
     onset_accuracy_reward_coef: float = 0.0
     onset_hit_bonus: float = 1.0
@@ -209,7 +209,7 @@ def main(args: Args) -> None:
         run_name = f"SAC-{args.environment_name}-{args.seed}-{time.time()}"
 
     # Create experiment directory.
-    experiment_dir = Path(args.root_dir) / run_name
+    experiment_dir = Path(args.root_dir) / "video" / run_name
     eval_dir = experiment_dir / "eval"
     experiment_dir.mkdir(parents=True, exist_ok=True)
     eval_dir.mkdir(parents=True, exist_ok=True)
@@ -323,7 +323,7 @@ def main(args: Args) -> None:
                 wandb.log({"global_step": i, **prefix_velocity_trajectory(row)})
             eval_env.latest_filename.unlink()
 
-        if i % args.checkpoint_interval == 0:
+        if i % args.checkpoint_interval == 0 or i == args.max_steps:
             ckpt_path = checkpoint_dir / f"checkpoint_{i}.flax"
             agent.save(ckpt_path)
             with open(checkpoint_dir / f"checkpoint_{i}_actor.flax", "wb") as f:

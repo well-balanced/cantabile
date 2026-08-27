@@ -30,3 +30,4 @@ experiments.csv
 .venv/
 data/
 rp1m*.zip
+torch_models_pig/

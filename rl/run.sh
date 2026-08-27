@@ -184,7 +184,7 @@ conda run -n cantabile --no-capture-output python train.py \
     --camera-id "piano/back" \
     --tqdm-bar \
     --mode "online" \
-    --checkpoint-interval 500000 \
+    --checkpoint-interval 2000000 \
     --seed $SEED \
     --velocity-reward-coef $VEL \
     --onset-accuracy-reward-coef $ONSET \
