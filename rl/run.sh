@@ -5,13 +5,22 @@
 #   bash run.sh --method <method> --song <song> [options]
 #
 # Methods:  base | vel_aware | base_residual | vel_aware_residual | abl_dof
-# Songs:    twinkle | clair | nocturne | gymnopedie | forelise | prelude | waltz | berceuse
+# Songs:    twinkle | clair | nocturne | gymnopedie | forelise | prelude | waltz | berceuse |
+#           reverie | frenchminuet | (etude-12) fsuite1a | fsuite5s | sonatad845 | partita26 |
+#           etudewaltz | bagatelle | kreisleriana | fsuite5g | sonata23_2 | golliwogg |
+#           sonata2_1 | sonatak279
 # DOF:      fingers_only (default) | fingers_wrist | all  [only for abl_dof]
 #
 # Hyperparameter overrides (method defaults apply if omitted):
-#   --vel <float>    velocity_reward_coef
-#   --onset <float>  onset_accuracy_reward_coef
-#   --alpha <float>  residual_alpha
+#   --vel <float>        velocity_reward_coef
+#   --onset <float>      onset_accuracy_reward_coef
+#   --alpha <float>      residual_alpha
+#   --max-steps <int>    total env steps (default 5000000 -- NOTE: base_residual/
+#                        vel_aware_residual load checkpoint_5000000.flax by name, so
+#                        overriding this for a *base-checkpoint-producing* run breaks
+#                        that reference. Safe to override for standalone baselines
+#                        (e.g. the 8M-step protocol for pure `base`/`vel_aware` runs
+#                        not meant to be reused as a residual base).
 #
 # Examples:
 #   bash run.sh --method base --song twinkle --seed 0 --gpu 0
@@ -32,6 +41,7 @@ OVR_VEL=""
 OVR_ONSET=""
 OVR_ALPHA=""
 OVR_BASE_CKPT=""
+MAX_STEPS=5000000
 STYLE_SCALE=1.0
 STYLE_BIAS=0.0
 STYLE_CONTRAST=1.0
@@ -49,6 +59,7 @@ while [[ $# -gt 0 ]]; do
         --onset)      OVR_ONSET="$2";    shift 2 ;;
         --alpha)      OVR_ALPHA="$2";    shift 2 ;;
         --base-ckpt)  OVR_BASE_CKPT="$2"; shift 2 ;;
+        --max-steps)  MAX_STEPS="$2";     shift 2 ;;
         --scale)      STYLE_SCALE="$2";  shift 2 ;;
         --bias)       STYLE_BIAS="$2";   shift 2 ;;
         --contrast)   STYLE_CONTRAST="$2"; shift 2 ;;
@@ -73,6 +84,19 @@ case $SONG in
     berceuse)      ENV="RoboPianist-debug-Berceuse-v0" ;;
     reverie)       ENV="RoboPianist-debug-Reverie-v0" ;;
     frenchminuet)  ENV="RoboPianist-debug-FrenchSuiteNo3Minuet-v0" ;;
+    # RoboPianist-etude-12 (original RoboPianist paper's standard 12-etude benchmark).
+    fsuite1a)   ENV="RoboPianist-etude-12-FrenchSuiteNo1Allemande-v0" ;;
+    fsuite5s)   ENV="RoboPianist-etude-12-FrenchSuiteNo5Sarabande-v0" ;;
+    sonatad845) ENV="RoboPianist-etude-12-PianoSonataD8451StMov-v0" ;;
+    partita26)  ENV="RoboPianist-etude-12-PartitaNo26-v0" ;;
+    etudewaltz) ENV="RoboPianist-etude-12-WaltzOp64No1-v0" ;;
+    bagatelle)  ENV="RoboPianist-etude-12-BagatelleOp3No4-v0" ;;
+    kreisleriana) ENV="RoboPianist-etude-12-KreislerianaOp16No8-v0" ;;
+    fsuite5g)   ENV="RoboPianist-etude-12-FrenchSuiteNo5Gavotte-v0" ;;
+    sonata23_2) ENV="RoboPianist-etude-12-PianoSonataNo232NdMov-v0" ;;
+    golliwogg)  ENV="RoboPianist-etude-12-GolliwoggsCakewalk-v0" ;;
+    sonata2_1)  ENV="RoboPianist-etude-12-PianoSonataNo21StMov-v0" ;;
+    sonatak279) ENV="RoboPianist-etude-12-PianoSonataK279InCMajor1StMov-v0" ;;
     *) echo "Unknown song: $SONG"; exit 1 ;;
 esac
 
@@ -151,7 +175,7 @@ fi
 
 echo "Launching: ${RUN_NAME} on GPU ${GPU}"
 echo "  env:     ${ENV}"
-echo "  vel:     ${VEL}  onset: ${ONSET}"
+echo "  vel:     ${VEL}  onset: ${ONSET}  max-steps: ${MAX_STEPS}"
 [[ -n "$RESIDUAL_ARGS" ]] && echo "  residual: ${RESIDUAL_ARGS}"
 
 if [[ "$DRY_RUN" == "true" ]]; then
@@ -164,10 +188,10 @@ MUJOCO_GL=egl \
 XLA_PYTHON_CLIENT_PREALLOCATE=false \
 CUDA_VISIBLE_DEVICES=$GPU \
 MUJOCO_EGL_DEVICE_ID=$GPU \
-conda run -n cantabile --no-capture-output python train.py \
+../.venv/bin/python train.py \
     --root-dir ./tmp \
     --warmstart-steps 5000 \
-    --max-steps 5000000 \
+    --max-steps $MAX_STEPS \
     --discount 0.8 \
     --agent-config.critic-dropout-rate 0.01 \
     --agent-config.critic-layer-norm \
