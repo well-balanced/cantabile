@@ -66,6 +66,8 @@ class Args:
     velocity_reward_coef: float = 0.0
     onset_accuracy_reward_coef: float = 0.0
     onset_hit_bonus: float = 1.0
+    velocity_reward_margin: float = 20.0
+    n_steps_velocity_lookahead: int = 2
     # Residual RL options.
     base_checkpoint: Optional[Path] = None
     residual_alpha: float = 0.0
@@ -164,6 +166,8 @@ def get_env(args: Args, record_dir: Optional[Path] = None):
             velocity_reward_coef=args.velocity_reward_coef,
             onset_accuracy_reward_coef=args.onset_accuracy_reward_coef,
             onset_hit_bonus=args.onset_hit_bonus,
+            velocity_reward_margin=args.velocity_reward_margin,
+            n_steps_velocity_lookahead=args.n_steps_velocity_lookahead,
             style_params=StyleParams(
                 velocity_scale=args.style_velocity_scale,
                 velocity_bias=args.style_velocity_bias,

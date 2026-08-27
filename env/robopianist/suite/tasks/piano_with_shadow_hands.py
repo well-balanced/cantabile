@@ -50,6 +50,14 @@ _POSITION_OFFSET = 0.05
 # Onset accuracy reward constants.
 _ONSET_ACCURACY_HIT_BONUS = 1.0
 
+# Velocity reward tolerance margin (MIDI velocity units, 0-127 scale), i.e. how far
+# past the +-1 "exact" window an onset's velocity can be before its reward decays to
+# ~value_at_margin. Was hardcoded; parameterized for margin_sweep (see ref/tasks.md
+# #14 and cantabile-torch-export/margin-sweep discussion -- human-human velocity MAE,
+# rl/human_mae/results/human_mae_summary.json, gives a data-grounded reference point
+# for choosing sweep values here rather than picking blindly).
+_VELOCITY_REWARD_MARGIN = 20.0
+
 
 @dataclass
 class StyleParams:
@@ -142,6 +150,7 @@ class PianoWithShadowHands(base.PianoTask):
         velocity_reward_coef: float = 0.0,
         onset_accuracy_reward_coef: float = 0.0,
         onset_hit_bonus: float = _ONSET_ACCURACY_HIT_BONUS,
+        velocity_reward_margin: float = _VELOCITY_REWARD_MARGIN,
         n_steps_velocity_lookahead: int = 2,
         style_params: Optional[StyleParams] = None,
         **kwargs,
@@ -179,6 +188,9 @@ class PianoWithShadowHands(base.PianoTask):
             velocity_reward_coef: Coefficient for the velocity reward.
             onset_accuracy_reward_coef: Coefficient for the onset accuracy reward.
             onset_hit_bonus: Weight for the hit_rate term in onset accuracy reward.
+            velocity_reward_margin: Tolerance margin (MIDI velocity units) for the
+                velocity reward's onset-accuracy scoring -- see
+                _compute_velocity_reward and _VELOCITY_REWARD_MARGIN above.
             n_steps_velocity_lookahead: Number of timesteps to look ahead in the
                 velocity goal observable.
         """
@@ -207,6 +219,7 @@ class PianoWithShadowHands(base.PianoTask):
         self._velocity_reward_coef = velocity_reward_coef
         self._onset_accuracy_reward_coef = onset_accuracy_reward_coef
         self._onset_hit_bonus = onset_hit_bonus
+        self._velocity_reward_margin = velocity_reward_margin
         self._n_steps_velocity_lookahead = n_steps_velocity_lookahead
         self._style_params = style_params
 
@@ -529,7 +542,7 @@ class PianoWithShadowHands(base.PianoTask):
             accuracy = tolerance(
                 robot_midi_vel,
                 bounds=(lo, hi),
-                margin=20,
+                margin=self._velocity_reward_margin,
                 sigmoid="gaussian",
                 value_at_margin=0.05,
             )
