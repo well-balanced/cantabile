@@ -32,7 +32,15 @@ data/
 rp1m*.zip
 torch_models_pig/
 
-# Sweep result snapshots -- regenerable from wandb via experiments/*/build_dataset.py
-experiments/
+# Sweep result snapshots: the CSVs are regenerable from wandb by each sweep's own
+# build_dataset.py, so they stay out of the tree -- but the README (protocol, results
+# table, caveats) and the regeneration script are the analysis, and do belong in it.
+# Note the shape: `experiments/` alone would exclude the directory, and git never
+# descends into an excluded directory, so no `!` rule beneath it could take effect.
+# Excluding the *contents* and re-including the directories is what makes that work.
+experiments/**
+!experiments/**/
+!experiments/*/README.md
+!experiments/*/build_dataset.py
 # MuJoCo writes this next to whatever ran; not a *.log so the rule above misses it
 MUJOCO_LOG.TXT
