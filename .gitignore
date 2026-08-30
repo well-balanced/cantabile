@@ -31,3 +31,8 @@ experiments.csv
 data/
 rp1m*.zip
 torch_models_pig/
+
+# Sweep result snapshots -- regenerable from wandb via experiments/*/build_dataset.py
+experiments/
+# MuJoCo writes this next to whatever ran; not a *.log so the rule above misses it
+MUJOCO_LOG.TXT
