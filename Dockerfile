@@ -24,10 +24,16 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # libraries; the driver side arrives through the NVIDIA container toolkit at `--gpus`
 # time, which is why this image needs no driver of its own. Without these the run does
 # not error — it renders black frames and completes.
+#
+# build-essential + portaudio19-dev are for PyAudio, which robopianist requires and
+# which ships no wheel — pip builds it from an sdist, and without the headers the
+# image build fails partway through the pip layer. (Verified by resolving the
+# dependency graph: PyAudio 0.2.14 is the only sdist in the whole tree.)
 RUN apt-get update && apt-get install -y --no-install-recommends \
         python3.10 python3-pip python3.10-dev \
         libegl1 libgles2 libglib2.0-0 libosmesa6 \
         libsndfile1 fluidsynth \
+        build-essential portaudio19-dev \
         git curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 

@@ -3,7 +3,10 @@
 # new box:
 #
 #   curl -fsSL https://raw.githubusercontent.com/well-balanced/cantabile/eval51/fleet.sh -o fleet.sh
-#   WANDB_API_KEY=... HF_TOKEN=... bash fleet.sh
+#   WANDB_API_KEY=... HF_TOKEN=... GPUS=0,2 bash fleet.sh
+#
+# GPUS is required and never inferred. These machines are shared, so a launcher that
+# detected "all GPUs" would quietly take slots someone else is using. State them.
 #
 # Everything the training needs is in the image. The one thing that cannot be shipped
 # in an image is the host's NVIDIA plumbing, so this checks for it and tells you the
@@ -12,8 +15,8 @@
 set -euo pipefail
 
 IMAGE="${IMAGE:-wellbalanced/cantabile:v1}"
-SLOTS_PER_GPU="${SLOTS_PER_GPU:-4}"
-GPUS="${GPUS:-all}"          # "all", or a comma list like "0,2"
+SLOTS_PER_GPU="${SLOTS_PER_GPU:-4}"   # default when a GPU is given without ":n"
+GPUS="${GPUS:-}"                      # REQUIRED. "0,2" or, per-GPU, "0:4,2:2"
 SEED="${SEED:-43}"
 METHODS="${METHODS:-base}"
 SCRATCH="${SCRATCH:-$PWD/cantabile-scratch}"
@@ -29,6 +32,28 @@ die() { echo "ERROR: $*" >&2; exit 1; }
   Without it the failure appears only at upload, ~15 hours in, with the checkpoints
   about to be deleted along with the container."
 
+# --- which GPUs, and how many slots on each -----------------------------------
+# Never inferred. `nvidia-smi` would happily list GPUs that a colleague is mid-run on,
+# and four workers landing on one of those is the kind of mistake that is only noticed
+# hours later.
+[[ -n "$GPUS" ]] || die "GPUS is not set. Name the slots you are allowed to use:
+    GPUS=0,2            two GPUs, $SLOTS_PER_GPU slots each
+    GPUS=0:4,2:2        GPU0 with 4 slots, GPU2 with 2
+  Visible on this host:
+$(nvidia-smi --query-gpu=index,name,memory.used,memory.total,utilization.gpu \
+    --format=csv,noheader 2>/dev/null | sed 's/^/    /')"
+
+declare -a GPU_LIST=() SLOT_LIST=()
+IFS=',' read -ra _entries <<< "$GPUS"
+for e in "${_entries[@]}"; do
+  gpu="${e%%:*}"; slots="${e#*:}"
+  [[ "$slots" == "$e" ]] && slots="$SLOTS_PER_GPU"
+  [[ "$gpu" =~ ^[0-9]+$ && "$slots" =~ ^[0-9]+$ && "$slots" -ge 1 ]] \
+    || die "bad GPUS entry '$e' (expected N or N:slots)"
+  nvidia-smi -i "$gpu" >/dev/null 2>&1 || die "GPU $gpu does not exist on this host"
+  GPU_LIST+=("$gpu"); SLOT_LIST+=("$slots")
+done
+
 # --- host prerequisites ------------------------------------------------------
 command -v docker >/dev/null || die "docker is not installed.
   Ubuntu:  curl -fsSL https://get.docker.com | sh"
@@ -38,10 +63,12 @@ command -v nvidia-smi >/dev/null || die "no NVIDIA driver found (nvidia-smi miss
 # The container toolkit is the one piece that must exist on the host: it is what makes
 # the driver visible inside the container. Test it for real rather than checking for a
 # package name, since a present-but-unconfigured install fails the same way.
-if ! docker run --rm --gpus all "$IMAGE" -c 'import jax,sys; sys.exit(0 if jax.devices()[0].platform=="gpu" else 1)' \
-     --entrypoint python >/dev/null 2>&1; then
-  if ! docker info 2>/dev/null | grep -qi nvidia; then
-    die "NVIDIA Container Toolkit is not installed or not configured.
+# `--entrypoint` is a `docker run` option and must precede the image name; putting it
+# after would pass it to the container as an argument and the probe would always fail.
+if ! docker run --rm --gpus all --entrypoint python "$IMAGE" \
+       -c 'import jax,sys; sys.exit(0 if jax.devices()[0].platform=="gpu" else 1)' \
+       >/dev/null 2>&1; then
+    die "GPUs are not usable from a container — NVIDIA Container Toolkit missing or unconfigured.
   Ubuntu:
     curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \\
       | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
@@ -49,29 +76,30 @@ if ! docker run --rm --gpus all "$IMAGE" -c 'import jax,sys; sys.exit(0 if jax.d
       | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' \\
       | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
     sudo apt-get update && sudo apt-get install -y nvidia-container-toolkit
-    sudo nvidia-ctk runtime configure --runtime=docker && sudo systemctl restart docker"
-  fi
+    sudo nvidia-ctk runtime configure --runtime=docker && sudo systemctl restart docker
+
+  Already installed? Check it is wired into docker:
+    docker info | grep -i nvidia
+    docker run --rm --gpus all $IMAGE --help"
 fi
 
-# --- which GPUs --------------------------------------------------------------
-if [[ "$GPUS" == "all" ]]; then
-  mapfile -t GPU_LIST < <(nvidia-smi --query-gpu=index --format=csv,noheader)
-else
-  IFS=',' read -ra GPU_LIST <<< "$GPUS"
-fi
-[[ ${#GPU_LIST[@]} -gt 0 ]] || die "no GPUs selected"
 
 mkdir -p "$SCRATCH"
+_total=0; _plan=""
+for i in "${!GPU_LIST[@]}"; do
+  _plan+="${GPU_LIST[$i]}x${SLOT_LIST[$i]} "; _total=$(( _total + SLOT_LIST[i] ))
+done
 echo "image   : $IMAGE"
-echo "gpus    : ${GPU_LIST[*]}  x $SLOTS_PER_GPU slots"
+echo "gpus    : $_plan ($_total worker(s))"
 echo "arms    : $METHODS   seed: $SEED"
 echo "scratch : $SCRATCH"
 echo
 
 docker pull "$IMAGE"
 
-for gpu in "${GPU_LIST[@]}"; do
-  for slot in $(seq 1 "$SLOTS_PER_GPU"); do
+for i in "${!GPU_LIST[@]}"; do
+  gpu="${GPU_LIST[$i]}"
+  for slot in $(seq 1 "${SLOT_LIST[$i]}"); do
     name="cantabile-g${gpu}-s${slot}"
     docker rm -f "$name" >/dev/null 2>&1 || true
     docker run -d --name "$name" --restart unless-stopped \
@@ -87,7 +115,7 @@ done
 
 cat <<EOF
 
-$(( ${#GPU_LIST[@]} * SLOTS_PER_GPU )) worker(s) running.
+$_total worker(s) running on GPU(s) ${GPU_LIST[*]}.
 
   docker logs -f cantabile-g${GPU_LIST[0]}-s1     follow one
   docker ps --filter name=cantabile               list
