@@ -69,16 +69,37 @@ esac
 
 python -m pip install -q --upgrade pip
 
-python -c "import jax" 2>/dev/null || pip install -q "jax[cuda12]==0.6.2"
-python -c "import flax, wandb, tyro" 2>/dev/null || pip install -q -r rl/requirements.txt
-if ! python -c "import mujoco, dm_control, note_seq, huggingface_hub, torch" 2>/dev/null; then
-  # torch is the CPU wheel on purpose: it only writes .pt state_dicts at export time,
-  # training is JAX. The +cpu local version outranks plain PyPI's, so this selects the
-  # CPU build and pulls no nvidia-* packages.
-  pip install -q mujoco dm_control note_seq pretty_midi soundfile huggingface_hub \
+# One resolve for everything, not one per group. Installing jax pinned and then
+# `-r requirements.txt` separately lets pip satisfy flax's unpinned jax dependency by
+# *upgrading* jax and jaxlib — leaving jax-cuda12-plugin behind at the pinned version.
+# The mismatch does not fail the install; it fails at import, as
+# "plugin 0.6.2 is not compatible with the installed jaxlib 0.10.2" followed by no
+# CUDA backend. Resolving together makes pip reconcile the pin instead.
+#
+# torch is the CPU wheel on purpose: it only writes .pt state_dicts at export time,
+# training is JAX. The +cpu local version outranks plain PyPI's, so this selects the
+# CPU build and pulls no nvidia-* packages.
+if ! python -c "import jax, flax, mujoco, dm_control, note_seq, huggingface_hub, torch" 2>/dev/null; then
+  pip install -q \
+      "jax[cuda12]==0.6.2" \
+      -r rl/requirements.txt \
+      mujoco dm_control note_seq pretty_midi soundfile huggingface_hub \
       torch --extra-index-url https://download.pytorch.org/whl/cpu
 fi
 python -c "import robopianist" 2>/dev/null || pip install -q -e ./env
+
+# The pin is only worth anything if it survived the resolve.
+python - <<'CHECK'
+import sys
+import importlib.metadata as md
+v = {p: md.version(p) for p in ("jax", "jaxlib", "jax-cuda12-plugin")}
+print("  " + ", ".join(f"{k} {x}" for k, x in v.items()))
+if len({x for x in v.values()}) != 1:
+    print("  !! jax, jaxlib and the CUDA plugin must all be the same version.")
+    print("     Reinstall them together:")
+    print("       pip install --force-reinstall 'jax[cuda12]==0.6.2'")
+    sys.exit(1)
+CHECK
 
 # --- 2. the hand model -------------------------------------------------------
 # Gitignored, so a fresh clone does not have it, and MuJoCo cannot build the scene
