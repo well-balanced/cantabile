@@ -1,0 +1,17 @@
+# The 551 GB data dir and the 7 GB venv must never enter the build context — docker
+# reads the whole context before the first layer runs, so leaving them in makes even a
+# no-op build take minutes and stream gigabytes to the daemon.
+data/
+.venv/
+ref/
+torch_models_pig/
+rl/tmp/
+rl/wandb/
+rl/logs/
+rl/checkpoints/
+experiments/
+env/third_party/
+env/PianoFingeringDataset_v1.2/
+.git/
+**/__pycache__/
+*.pyc
