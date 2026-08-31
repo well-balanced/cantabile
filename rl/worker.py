@@ -95,6 +95,16 @@ class Args:
     once: bool = False
     dry_run: bool = False
 
+    # Smoke-test knobs. Defaults (None/empty) mean "use the arm spec", so a normal
+    # worker never touches them. They exist because the only honest way to test the
+    # claim -> train -> upload -> release cycle is to run it, and a real cell is 8M
+    # steps of GPU time.
+    songs: Tuple[str, ...] = ()
+    """Restrict to these song folders. Empty = anything in the queue."""
+    max_steps_override: Optional[int] = None
+    keep_steps: Tuple[int, ...] = ()
+    """Which checkpoint steps to upload. Empty = KEEP_STEPS (5M-8M)."""
+
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
@@ -227,7 +237,9 @@ def env_for(song: str, songs_csv: str) -> str:
 
 
 def train(args: Args, song: str, method: str) -> str:
-    spec = ARMS[method]
+    spec = dict(ARMS[method])
+    if args.max_steps_override:
+        spec["steps"] = args.max_steps_override
     run = f"{method}-{song}-s{args.seed}"
     cmd = ["../.venv/bin/python", "train.py",
            "--root-dir", "./tmp", "--warmstart-steps", "5000",
@@ -287,26 +299,47 @@ def fetch_base(api, args: Args, song: str, method: str):
         raise RuntimeError(f"branch checkpoint for {song}/{src} not downloadable")
 
 
+def convert(args: Args, run: str) -> Path:
+    """flax -> torch, in a subprocess pinned to JAX-on-CPU.
+
+    This MUST NOT run in this process. `preflight` initialises JAX on the GPU to check
+    the device is visible, and JAX's backend cannot be re-selected afterwards -- the
+    `JAX_PLATFORMS=cpu` that export_torch sets at import time then has no effect. The
+    conversion's flax-vs-torch cross-check would run its forward pass on the GPU, where
+    reduced-precision matmul accumulation produces a ~1e-3 disagreement with torch's
+    exact-float32 CPU matmul and trips the 1e-3 tolerance. The weights are fine; the
+    check is measuring the accelerator. A fresh process gets a clean backend.
+    """
+    out_dir = Path("tmp/worker_export") / run
+    shutil.rmtree(out_dir, ignore_errors=True)
+    env = os.environ.copy()
+    env["JAX_PLATFORMS"] = "cpu"
+    env.pop("CUDA_VISIBLE_DEVICES", None)
+    cmd = ["../.venv/bin/python", "export_checkpoints_hf.py",
+           "--out-dir", str(out_dir), "--include", run, "--all-steps",
+           "--wandb-project", ""]
+    rc = subprocess.call(cmd, env=env)
+    if rc != 0:
+        raise RuntimeError(f"export_checkpoints_hf.py exited {rc} for {run}")
+    return out_dir
+
+
 def upload(api, args: Args, song: str, method: str, run: str):
     """Convert, then upload the .pt files BEFORE releasing the claim. A reader must
     never see a released cell whose artifacts are still in flight."""
     from huggingface_hub import CommitOperationAdd
-    import export_checkpoints_hf as X
 
     ckpt_dir = Path("tmp/checkpoints") / run
+    exported = convert(args, run)
+    by_step = {int(p.stem): p for p in exported.rglob("*.pt") if p.stem.isdigit()}
+
     ops = []
-    for step in KEEP_STEPS:
-        sidecar = ckpt_dir / f"checkpoint_{step}_actor.flax"
-        if not sidecar.exists():
+    for step in (args.keep_steps or KEEP_STEPS):
+        pt = by_step.get(step)
+        if pt is None:
             continue
-        shape = X.infer_shape(sidecar)
-        if shape is None:
-            continue
-        obs, act, hidden = shape
-        out = ckpt_dir / f"{step:08d}.pt"
-        X.convert_one(sidecar, out, obs, act, hidden, full_agent=False)
         ops.append(CommitOperationAdd(f"main/{song}/{method}/{args.seed}/{step:08d}.pt",
-                                      str(out)))
+                                      str(pt)))
         # The flax branch checkpoint travels with it so a residual worker on another
         # machine can start from it without needing this machine's disk.
         if step == BRANCH_STEP and ARMS[method]["base_from"] is None:
@@ -366,7 +399,9 @@ def main(args: Args):
     while True:
         cells, _ = read_queue(api, args.runs_repo)
         todo = [(s, m) for (s, m) in cells
-                if m in args.methods and claimable(api, args, cells, s, m)]
+                if m in args.methods
+                and (not args.songs or s in args.songs)
+                and claimable(api, args, cells, s, m)]
         if not todo:
             print(f"nothing claimable; sleeping {args.idle_sleep}s", flush=True)
             if args.once:
