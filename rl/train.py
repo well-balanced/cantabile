@@ -29,6 +29,14 @@ class Args:
     log_interval: int = 1_000
     eval_interval: int = 10_000
     eval_episodes: int = 1
+    video_interval: int = 200_000
+    """How often to attach the eval rollout video to the wandb log, in steps.
+
+    Deliberately much coarser than `eval_interval`: `wandb.Video` copies the mp4 into
+    the run directory, so uploading one per eval kept a full 800-video, 2.3 GB copy per
+    8M-step run (303 runs had accumulated 90 GB of them). The local render is unlinked
+    either way; this only controls how many get kept. Must be a multiple of
+    `eval_interval` to ever fire -- video logging rides along with an eval."""
     batch_size: int = 256
     discount: float = 0.99
     tqdm_bar: bool = False
@@ -321,8 +329,12 @@ def main(args: Args) -> None:
             log_dict = prefix_dict("eval", eval_env.get_statistics())
             vel_dict = prefix_dict("eval", eval_env.get_velocity_metrics())
             music_dict = prefix_dict("eval", eval_env.get_musical_metrics())
-            video = wandb.Video(str(eval_env.latest_filename), fps=4, format="mp4")
-            wandb.log({"global_step": i, **log_dict, **music_dict, **vel_dict, "video": video})
+            eval_log = {"global_step": i, **log_dict, **music_dict, **vel_dict}
+            if args.video_interval > 0 and i % args.video_interval == 0:
+                eval_log["video"] = wandb.Video(
+                    str(eval_env.latest_filename), fps=4, format="mp4"
+                )
+            wandb.log(eval_log)
             for row in eval_env.get_velocity_trajectory_metrics():
                 wandb.log({"global_step": i, **prefix_velocity_trajectory(row)})
             eval_env.latest_filename.unlink()
