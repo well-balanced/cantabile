@@ -94,6 +94,10 @@ class Args:
     cells the moment the queue grows."""
     once: bool = False
     dry_run: bool = False
+    eval_video: bool = True
+    """Render eval rollout videos. Turn off on a host with no working GL context —
+    an unprivileged pod, typically. Every metric is kept either way; only the video
+    goes, because the musical metrics come from a wrapper that never renders."""
 
     # Smoke-test knobs. Defaults (None/empty) mean "use the arm spec", so a normal
     # worker never touches them. They exist because the only honest way to test the
@@ -257,13 +261,18 @@ def train(args: Args, song: str, method: str) -> str:
            "--velocity-reward-coef", str(spec["vel"]),
            "--onset-accuracy-reward-coef", str(spec["onset"]),
            "--seed", str(args.seed), "--name", run, "--tags", "eval51"]
+    if not args.eval_video:
+        cmd.append("--no-eval-video")
     if spec["base_from"]:
         src = f"./checkpoints/{spec['base_from']}/{song}/seed{args.seed}/checkpoint_{BRANCH_STEP}.flax"
         cmd += ["--residual-alpha", str(spec["alpha"]),
                 "--residual-action-mode", "fingers_only", "--base-checkpoint", src]
 
     env = os.environ.copy()
-    env.update({"WANDB_DIR": "./", "MUJOCO_GL": "egl",
+    env.update({"WANDB_DIR": "./",
+                # `disable` skips GL entirely, which is only safe because nothing
+                # renders when eval video is off.
+                "MUJOCO_GL": "egl" if args.eval_video else "disable",
                 "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
                 "CUDA_VISIBLE_DEVICES": str(args.gpu), "MUJOCO_EGL_DEVICE_ID": "0"})
     os.makedirs("logs", exist_ok=True)
@@ -379,6 +388,7 @@ def preflight(args: Args):
     if d.platform != "gpu":
         raise SystemExit(f"no GPU visible to JAX (got {d.platform})")
 
+    os.environ.setdefault("MUJOCO_GL", "egl" if args.eval_video else "disable")
     from robopianist import suite
     e = suite.load(environment_name="RoboPianist-debug-TwinkleTwinkleRousseau-v0", seed=0)
     e.reset()

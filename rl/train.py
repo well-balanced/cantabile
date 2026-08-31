@@ -65,6 +65,12 @@ class Args:
     clip: bool = True
     record_dir: Optional[Path] = None
     record_every: int = 1
+    eval_video: bool = True
+    """Render an eval rollout video. Off decouples the metrics from rendering: the
+    musical metrics come from MidiEvaluationWrapper, which needs no GL context at
+    all, while the video wrapper needs a working EGL setup and a soundfont. On a
+    host where those cannot be installed — an unprivileged Kubernetes pod, say —
+    turning this off is the difference between training and not."""
     record_resolution: Tuple[int, int] = (480, 640)
     camera_id: Optional[str | int] = "piano/back"
     action_reward_observation: bool = False
@@ -185,14 +191,18 @@ def get_env(args: Args, record_dir: Optional[Path] = None):
         ),
     )
     if record_dir is not None:
-        env = robopianist_wrappers.PianoSoundVideoWrapper(
-            environment=env,
-            record_dir=record_dir,
-            record_every=args.record_every,
-            camera_id=args.camera_id,
-            height=args.record_resolution[0],
-            width=args.record_resolution[1],
-        )
+        # The video wrapper is optional; the evaluation wrappers below are not. They
+        # used to sit inside one branch, which meant a host that could not render also
+        # could not measure.
+        if args.eval_video:
+            env = robopianist_wrappers.PianoSoundVideoWrapper(
+                environment=env,
+                record_dir=record_dir,
+                record_every=args.record_every,
+                camera_id=args.camera_id,
+                height=args.record_resolution[0],
+                width=args.record_resolution[1],
+            )
         env = wrappers.EpisodeStatisticsWrapper(
             environment=env, deque_size=args.record_every
         )
@@ -330,14 +340,15 @@ def main(args: Args) -> None:
             vel_dict = prefix_dict("eval", eval_env.get_velocity_metrics())
             music_dict = prefix_dict("eval", eval_env.get_musical_metrics())
             eval_log = {"global_step": i, **log_dict, **music_dict, **vel_dict}
-            if args.video_interval > 0 and i % args.video_interval == 0:
+            if args.eval_video and args.video_interval > 0 and i % args.video_interval == 0:
                 eval_log["video"] = wandb.Video(
                     str(eval_env.latest_filename), fps=4, format="mp4"
                 )
             wandb.log(eval_log)
             for row in eval_env.get_velocity_trajectory_metrics():
                 wandb.log({"global_step": i, **prefix_velocity_trajectory(row)})
-            eval_env.latest_filename.unlink()
+            if args.eval_video:
+                eval_env.latest_filename.unlink()
 
         if i % args.checkpoint_interval == 0 or i == args.max_steps:
             ckpt_path = checkpoint_dir / f"checkpoint_{i}.flax"

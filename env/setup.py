@@ -40,7 +40,6 @@ core_requirements = [
     "mujoco_utils>=0.0.6",
     "note_seq>=0.0.5",
     "pretty_midi>=0.2.10",
-    "pyaudio>=0.2.12",
     "pyfluidsynth>=1.3.2",
     "scikit-learn==1.4.2",
     "termcolor",
@@ -100,6 +99,10 @@ setup(
     include_package_data=True,
     classifiers=classifiers,
     extras_require={
+        # PyAudio only backs MidiFile.play(), i.e. local speaker playback, and has no
+        # Linux wheel — keeping it out of the core requirements is what lets the
+        # package install where there is no compiler or portaudio headers.
+        "audio": ["pyaudio>=0.2.12"],
         "test": test_requirements,
         "dev": dev_requirements,
     },
