@@ -28,6 +28,19 @@ VENV="${VENV:-.venv}"
 
 say()  { printf '\n\033[1m== %s\033[0m\n' "$*"; }
 warn() { printf '\033[33m!! %s\033[0m\n' "$*"; }
+die()  { printf '\033[31mERROR: %s\033[0m\n' "$*" >&2; exit 1; }
+
+# jaxlib 0.6.2 publishes wheels for cp310-cp313 only. On anything outside that, pip
+# reports "no matching distribution" for jaxlib rather than naming the interpreter,
+# which reads like a broken index. Check it here, where the fix can be stated.
+PYV=$("$PYTHON" -c 'import sys;print("%d.%d"%sys.version_info[:2])' 2>/dev/null || echo "?")
+case "$PYV" in
+  3.10|3.11|3.12|3.13) ;;
+  *) die "python $PYV is not supported by jaxlib 0.6.2 (needs 3.10-3.13).
+  Point PYTHON at a supported interpreter — with conda, no root needed:
+    conda create -y -n cantabile python=3.11
+    PYTHON=\"\$(conda info --base)/envs/cantabile/bin/python\" bash setup_no_docker.sh" ;;
+esac
 
 # --- 1. python environment ---------------------------------------------------
 say "python environment"
