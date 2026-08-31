@@ -33,6 +33,12 @@ die()  { printf '\033[31mERROR: %s\033[0m\n' "$*" >&2; exit 1; }
 
 # --- 1. python environment ---------------------------------------------------
 say "python environment"
+# Validated even when the venv already exists. Otherwise a PYTHON pointing at a conda
+# env that was never created is silently skipped by the line below, and the run
+# proceeds on the stale venv as though the override had been honoured.
+command -v "$PYTHON" >/dev/null || [[ -x "$PYTHON" ]] || die "PYTHON=$PYTHON not found.
+  With conda the environment has to exist before it can be pointed at:
+    conda create -y -n cantabile python=3.11"
 [[ -d "$VENV" ]] || "$PYTHON" -m venv "$VENV"
 # shellcheck disable=SC1090
 . "$VENV/bin/activate"
