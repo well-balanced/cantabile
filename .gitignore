@@ -44,3 +44,8 @@ experiments/**
 !experiments/*/build_dataset.py
 # MuJoCo writes this next to whatever ran; not a *.log so the rule above misses it
 MUJOCO_LOG.TXT
+
+# Credentials. fleet.sh sources ./.env if present, and a WANDB_API_KEY or HF_TOKEN
+# committed here would stay in the history after any later deletion.
+.env
+.env.*
