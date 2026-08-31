@@ -37,8 +37,11 @@ say "python environment"
 # env that was never created is silently skipped by the line below, and the run
 # proceeds on the stale venv as though the override had been honoured.
 command -v "$PYTHON" >/dev/null || [[ -x "$PYTHON" ]] || die "PYTHON=$PYTHON not found.
-  With conda the environment has to exist before it can be pointed at:
-    conda create -y -n cantabile python=3.11"
+  The environment has to exist before it can be pointed at. On a shared host where
+  HOME belongs to someone else, create it by path rather than by name — a named env
+  goes under \$HOME/.conda, which is often not writable:
+    conda create -y -p ./conda-env python=3.11
+    PYTHON=\"\$PWD/conda-env/bin/python\" bash setup_no_docker.sh"
 [[ -d "$VENV" ]] || "$PYTHON" -m venv "$VENV"
 # shellcheck disable=SC1090
 . "$VENV/bin/activate"
@@ -55,10 +58,13 @@ PYV=$(python -c 'import sys;print("%d.%d"%sys.version_info[:2])')
 case "$PYV" in
   3.10|3.11|3.12|3.13) echo "  python $PYV ($(command -v python))" ;;
   *) die "the venv at $VENV runs python $PYV; jaxlib 0.6.2 needs 3.10-3.13.
-  Delete it and point PYTHON at a supported interpreter — with conda, no root needed:
+  Check first whether a supported interpreter is already here — conda env list, or
+  ls /opt/conda/bin/python3.* /usr/bin/python3.* — since one often is. Otherwise
+  create one by path, not by name (a named env goes under \$HOME/.conda, which on a
+  shared host is often not writable):
     rm -rf $VENV
-    conda create -y -n cantabile python=3.11
-    PYTHON=\"\$(conda info --base)/envs/cantabile/bin/python\" bash setup_no_docker.sh" ;;
+    conda create -y -p ./conda-env python=3.11
+    PYTHON=\"\$PWD/conda-env/bin/python\" bash setup_no_docker.sh" ;;
 esac
 
 python -m pip install -q --upgrade pip
