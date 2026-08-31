@@ -4,7 +4,7 @@
 # Usage:
 #   bash run.sh --method <method> --song <song> [options]
 #
-# Methods:  base | vel_aware | base_residual | vel_aware_residual | abl_dof
+# Methods:  base | vel | base_res | vel_res | abl_dof
 # Songs:    twinkle | clair | nocturne | gymnopedie | forelise | prelude | waltz | berceuse |
 #           reverie | frenchminuet | (etude-12) fsuite1a | fsuite5s | sonatad845 | partita26 |
 #           etudewaltz | bagatelle | kreisleriana | fsuite5g | sonata23_2 | golliwogg |
@@ -16,15 +16,15 @@
 #   --onset <float>      onset_accuracy_reward_coef
 #   --alpha <float>      residual_alpha
 #   --max-steps <int>    total env steps (default 5000000 -- NOTE: base_residual/
-#                        vel_aware_residual load checkpoint_5000000.flax by name, so
+#                        vel_res load checkpoint_5000000.flax by name, so
 #                        overriding this for a *base-checkpoint-producing* run breaks
 #                        that reference. Safe to override for standalone baselines
-#                        (e.g. the 8M-step protocol for pure `base`/`vel_aware` runs
+#                        (e.g. the 8M-step protocol for pure `base`/`vel` runs
 #                        not meant to be reused as a residual base).
 #
 # Examples:
 #   bash run.sh --method base --song twinkle --seed 0 --gpu 0
-#   bash run.sh --method vel_aware --song clair --vel 0.3 --onset 0.4
+#   bash run.sh --method vel --song clair --vel 0.3 --onset 0.4
 #   bash run.sh --method abl_dof --song twinkle --gpu 2 --dof fingers_wrist
 
 set -euo pipefail
@@ -110,27 +110,27 @@ case $METHOD in
         RUN_NAME="base-${SONG}-s${SEED}"
         GROUP="base"
         ;;
-    vel_aware)
+    vel)
         VEL=0.2
         ONSET=0.5
-        RUN_NAME="vel_aware-${SONG}-s${SEED}"
-        GROUP="vel_aware"
+        RUN_NAME="vel-${SONG}-s${SEED}"
+        GROUP="vel"
         ;;
-    base_residual)
+    base_res)
         VEL=0.5
         ONSET=0.5
         BASE_CKPT="./checkpoints/base/${SONG}/seed${SEED}/checkpoint_5000000.flax"
         RESIDUAL_ARGS="--residual-alpha 0.2 --residual-action-mode fingers_only --base-checkpoint ${BASE_CKPT}"
-        RUN_NAME="base_residual-${SONG}-s${SEED}"
-        GROUP="base_residual"
+        RUN_NAME="base_res-${SONG}-s${SEED}"
+        GROUP="base_res"
         ;;
-    vel_aware_residual)
+    vel_res)
         VEL=0.5
         ONSET=0.5
-        BASE_CKPT="./checkpoints/vel_aware/${SONG}/seed${SEED}/checkpoint_5000000.flax"
+        BASE_CKPT="./checkpoints/vel/${SONG}/seed${SEED}/checkpoint_5000000.flax"
         RESIDUAL_ARGS="--residual-alpha 0.2 --residual-action-mode fingers_only --base-checkpoint ${BASE_CKPT}"
-        RUN_NAME="vel_aware_residual-${SONG}-s${SEED}"
-        GROUP="vel_aware_residual"
+        RUN_NAME="vel_res-${SONG}-s${SEED}"
+        GROUP="vel_res"
         ;;
     abl_dof)
         VEL=0.5
@@ -149,14 +149,14 @@ case $METHOD in
     style_specialist)
         VEL=0.5
         ONSET=0.5
-        BASE_CKPT="./checkpoints/vel_aware/${SONG}/seed${SEED}/checkpoint_5000000.flax"
+        BASE_CKPT="./checkpoints/vel/${SONG}/seed${SEED}/checkpoint_5000000.flax"
         RESIDUAL_ARGS="--residual-alpha 0.2 --residual-action-mode fingers_only --base-checkpoint ${BASE_CKPT}"
         RUN_NAME="style_specialist-${SONG}-s${SEED}"
         GROUP="style_specialist"
         ;;
     *)
         echo "Unknown method: $METHOD"
-        echo "Valid methods: base | vel_aware | base_residual | vel_aware_residual | abl_dof | style_specialist"
+        echo "Valid methods: base | vel | base_res | vel_res | abl_dof | style_specialist"
         exit 1
         ;;
 esac
