@@ -47,9 +47,30 @@ if ! python -c "import mujoco, dm_control, note_seq, huggingface_hub, torch" 2>/
 fi
 python -c "import robopianist" 2>/dev/null || pip install -q -e ./env
 
-# --- 2. the MIDI corpus ------------------------------------------------------
-# The only asset that still has to come from elsewhere. Soundfonts and the hand model
-# are no longer needed: the first is for eval-video audio, the second ships in git.
+# --- 2. the hand model -------------------------------------------------------
+# Gitignored, so a fresh clone does not have it, and MuJoCo cannot build the scene
+# without it. Fetched sparsely: a full mujoco_menagerie checkout is 688 MB and nothing
+# under env/robopianist/ references any of the rest.
+say "hand model"
+HAND_DIR=env/robopianist/models/hands/third_party/shadow_hand
+MENAGERIE_COMMIT=1afc8be64233dcfe943b2fe0c505ec1e87a0a13e   # pinned by env/scripts/install_deps.sh
+if [[ -f "$HAND_DIR/right_hand.xml" ]]; then
+  echo "  ok"
+else
+  tmp=$(mktemp -d)
+  git clone -q --filter=blob:none --sparse \
+      https://github.com/google-deepmind/mujoco_menagerie.git "$tmp/m"
+  git -C "$tmp/m" sparse-checkout set shadow_hand
+  git -C "$tmp/m" checkout -q "$MENAGERIE_COMMIT"
+  mkdir -p "$HAND_DIR"
+  cp -r "$tmp/m/shadow_hand/." "$HAND_DIR/"
+  rm -rf "$tmp"
+  echo "  fetched ($(ls "$HAND_DIR" | wc -l) files)"
+fi
+
+# --- 3. the MIDI corpus ------------------------------------------------------
+# The only asset that cannot be fetched. Soundfonts are no longer needed at all:
+# they exist for eval-video audio, which --no-eval-video does not produce.
 say "song data"
 PIG_DIR=env/robopianist/music/data/pig_single_finger
 PIG_N=$(ls "$PIG_DIR"/*.proto 2>/dev/null | wc -l)
@@ -74,7 +95,7 @@ else
   echo "  ok ($PIG_N songs)"
 fi
 
-# --- 3. verify ---------------------------------------------------------------
+# --- 4. verify ---------------------------------------------------------------
 # Load an environment for real. "pip returned zero" and "this works" are different
 # claims, and the ways this fails are quiet ones.
 say "verify"
