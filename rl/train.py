@@ -1,5 +1,6 @@
 from pathlib import Path
 from typing import Optional, Tuple
+import os
 import tyro
 from dataclasses import dataclass, asdict
 import wandb
@@ -41,8 +42,12 @@ class Args:
     discount: float = 0.99
     tqdm_bar: bool = False
     replay_capacity: int = 1_000_000
-    project: str = "cantabile"
-    entity: str = "cantabile"
+    # Defaults read the environment so WANDB_PROJECT / WANDB_ENTITY work as they do
+    # everywhere else. They are passed to wandb.init() explicitly below, and an
+    # explicit argument beats the environment — so hardcoding them here silently sent
+    # every run to one project no matter what the environment said.
+    project: str = os.environ.get("WANDB_PROJECT", "cantabile")
+    entity: str = os.environ.get("WANDB_ENTITY", "cantabile")
     name: str = ""
     tags: str = ""
     notes: str = ""
